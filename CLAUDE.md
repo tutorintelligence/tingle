@@ -11,6 +11,7 @@ protocol; README.md for user-facing docs.
 swift build                      # compile
 swift run tingle-tests            # Swift unit tests (no XCTest: bare CLT works)
 python3 tools/test_payload.py    # device event-engine unit tests
+python3 tools/test_next_version.py  # release version-bump logic
 scripts/bundle.sh                # assemble dist/tingle.app (ad-hoc unless CODESIGN_IDENTITY set)
 swift run tingle                  # run the menu bar app (dev)
 ```
@@ -80,9 +81,26 @@ dictation, or the device payload. Add a regression test with every bug fix.
   the .app re-prompt every time until Developer ID signing lands. The dev
   binary attributes permissions to the invoking terminal instead.
 
-## Release (blocked on Apple Developer enrollment)
+## Contribution flow
 
-Tag `vX.Y.Z` → .github/workflows/release.yml: tests → sign → notarize →
-GitHub Release → bump the cask in tutorintelligence/homebrew-tap
-(packaging/tingle.rb is the template). Requires the five secrets listed in
-the workflow header.
+main is protected: squash-merge only, PRs required, CI (`test`) must pass.
+PR titles must be Conventional Commits (`feat:`, `fix:`, `perf:`,
+`refactor:`, `chore:`, `docs:`, `ci:`, `build:`, `test:`, `style:`) with a
+lowercase subject — enforced by .github/workflows/pr-title.yml. Since squash
+merges use the PR title as the commit subject, that title drives versioning.
+
+Work on a branch, `gh pr create`, let CI + title-lint pass, squash-merge.
+Claude cannot push to main directly.
+
+## Release (automated)
+
+.github/workflows/auto-release.yml runs on every push to main: it computes
+the next semver from the merge subject via `tools/next_version.py`
+(feat→minor, fix/perf/refactor→patch, `!`/BREAKING→major, chore/docs/ci/
+build/test/style→no release), then builds → signs+notarizes (if the Apple
+secrets exist) → tags → GitHub Release with the .app zip → bumps the cask in
+tutorintelligence/homebrew-tap. `tools/test_next_version.py` covers the
+version math. Until the Apple Developer secrets land the build is unsigned
+but releases still cut. Optional secrets: MACOS_CERT_P12_BASE64,
+MACOS_CERT_PASSWORD, NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD,
+TAP_PUSH_TOKEN.

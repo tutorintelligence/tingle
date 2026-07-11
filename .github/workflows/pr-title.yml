@@ -1,0 +1,35 @@
+name: PR title
+# Enforce Conventional Commits on PR titles. Because main is squash-only,
+# the PR title becomes the merge commit subject, which drives auto-versioning.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # feat -> minor, fix/perf/refactor -> patch, others -> no release
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            chore
+            docs
+            ci
+            build
+            test
+            style
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The PR title subject must start lowercase, e.g.
+            "feat: add battery percent" not "feat: Add battery percent".
