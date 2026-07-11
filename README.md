@@ -10,6 +10,13 @@ ting runs wireless on batteries into a line-in. A tiny MicroPython event
 engine, installed onto the ting's own disk with one click (no firmware
 modification, fully reversible), makes all of it work.
 
+## Requirements
+
+macOS only. Live **dictation requires macOS 26 (Tahoe) or later** — it uses
+Apple's on-device `SpeechAnalyzer`. Everything else (button macros,
+keystrokes, shell actions) works on macOS 13+. Apple Silicon or Intel. You
+also need the hardware below.
+
 ## Hardware setup
 
 You need:

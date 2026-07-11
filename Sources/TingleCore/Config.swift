@@ -112,7 +112,20 @@ public struct TingConfig: Decodable {
     static let summonAgentScript = """
 for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
   if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
-    open -a "$app"
+    osascript - "$app" <<'APPLESCRIPT'
+on run argv
+  set appName to item 1 of argv
+  tell application appName to activate
+  delay 0.3
+  tell application "System Events" to tell process appName
+    try
+      set {wx, wy} to position of window 1
+      set {ww, wh} to size of window 1
+      click at {wx + (ww / 2), wy + (wh * 0.9)}
+    end try
+  end tell
+end run
+APPLESCRIPT
     exit 0
   fi
 done
@@ -489,10 +502,10 @@ public final class ConfigStore {
     ]
 
     public static let defaultTOML = """
-    # tingle configuration — this file is the documentation.
+    # tingle configuration - this file is the documentation.
     # Edit and save: tingle reloads it live, no restart needed.
     #
-    # ── The device ──────────────────────────────────────────────────────
+    # -- The device ------------------------------------------------------------
     # Squeeze the ting's handle to dictate; release to finish.
     #   handle        -> "triggerDown" / "triggerUp"
     #   green button  -> "modeChange"   (also cycles the mode LED)
@@ -500,7 +513,7 @@ public final class ConfigStore {
     #   white button  -> "mode1".."mode4"  (which one depends on the mode LED)
     # Green and orange only register while the handle is released.
     #
-    # ── Actions ─────────────────────────────────────────────────────────
+    # -- Actions ------------------------------------------------------------
     #   { type = "dictate" }                     live transcription into the
     #                                            focused app (macOS 26+; only
     #                                            valid on triggerDown)
@@ -513,7 +526,7 @@ public final class ConfigStore {
     # Keys: a-z, 0-9, f1-f12, return, escape, space, tab, delete, arrows.
     # Modifiers: "cmd", "shift", "opt", "ctrl".
 
-    # Words and phrases that bias dictation recognition — names, jargon,
+    # Words and phrases that bias dictation recognition - names, jargon,
     # anything it keeps mishearing. Applied per-session, no training step.
     # Effective in the hundreds of entries (a giant dump dilutes the bias);
     # curate ruthlessly and add whatever it mangles for you.
@@ -583,7 +596,7 @@ public final class ConfigStore {
     ]
 
     # Corrections applied to finalized dictation text (word-boundary,
-    # case-sensitive) — for words the recognizer refuses to spell right
+    # case-sensitive) - for words the recognizer refuses to spell right
     # no matter how much vocabulary biasing it gets.
     [replacements]
     "Tamil" = "TOML"
@@ -600,14 +613,27 @@ public final class ConfigStore {
     # Green: scrap that take (press again for the take before it).
     modeChange = { type = "eraseDictation" }
 
-    # White (any green mode): summon your agent — bring the first running
+    # White (any green mode): summon your agent - bring the first running
     # AI coding app to the front, ready to dictate into. Adjust the app
     # list to taste; "white" is a catch-all, or map mode1..mode4 for
     # per-mode actions.
     white = { type = "shell", command = '''
     for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
       if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
-        open -a "$app"
+        osascript - "$app" <<'APPLESCRIPT'
+    on run argv
+      set appName to item 1 of argv
+      tell application appName to activate
+      delay 0.3
+      tell application "System Events" to tell process appName
+        try
+          set {wx, wy} to position of window 1
+          set {ww, wh} to size of window 1
+          click at {wx + (ww / 2), wy + (wh * 0.9)}
+        end try
+      end tell
+    end run
+    APPLESCRIPT
         exit 0
       fi
     done
