@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Swift tests
+        run: swift run tingle-tests
+      - name: Device payload tests
+        run: python3 tools/test_payload.py
+      - name: Payload copies in sync
+        run: cmp device/tingle_main.py Sources/TingleCore/Resources/tingle_main.py
+      - name: Bundle assembles
+        run: ./scripts/bundle.sh

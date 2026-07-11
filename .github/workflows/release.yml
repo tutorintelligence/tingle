@@ -1,0 +1,67 @@
+name: Release
+# Tag vX.Y.Z to cut a release. REQUIRES repo secrets (Apple Developer
+# Program enrollment first):
+#   MACOS_CERT_P12_BASE64   Developer ID Application cert, base64 .p12
+#   MACOS_CERT_PASSWORD     .p12 password
+#   NOTARY_APPLE_ID         Apple ID email
+#   NOTARY_TEAM_ID          10-char team id
+#   NOTARY_PASSWORD         app-specific password
+#   TAP_PUSH_TOKEN          PAT with push to tutorintelligence/homebrew-tap
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tests
+        run: |
+          swift run tingle-tests
+          python3 tools/test_payload.py
+
+      - name: Import signing certificate
+        run: |
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > cert.p12
+          security create-keychain -p tmppass build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p tmppass build.keychain
+          security import cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k tmppass build.keychain
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+
+      - name: Build, sign, bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" CODESIGN_IDENTITY="Developer ID Application" ./scripts/bundle.sh
+
+      - name: Notarize and staple
+        run: |
+          ditto -c -k --keepParent dist/tingle.app dist/tingle.zip
+          xcrun notarytool submit dist/tingle.zip \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" --wait
+          xcrun stapler staple dist/tingle.app
+          ditto -c -k --keepParent dist/tingle.app dist/tingle-${GITHUB_REF_NAME#v}.zip
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+
+      - name: GitHub release
+        run: gh release create "$GITHUB_REF_NAME" "dist/tingle-${GITHUB_REF_NAME#v}.zip" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Bump homebrew tap
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA=$(shasum -a 256 "dist/tingle-$VERSION.zip" | cut -d' ' -f1)
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/tutorintelligence/homebrew-tap.git" tap
+          sed -E -i '' "s/version \"[^\"]+\"/version \"$VERSION\"/; s/sha256 \"[^\"]+\"/sha256 \"$SHA\"/" tap/Casks/tingle.rb
+          cd tap && git commit -am "tingle $VERSION" && git push
+        env:
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}

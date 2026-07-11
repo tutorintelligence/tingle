@@ -1,0 +1,15 @@
+{
+  "name": "tingd passthrough",
+  "samples": [
+    { "pos": 0, "file": "1.wav", "playmode": "oneshot" },
+    { "pos": 1, "file": "2.wav", "playmode": "oneshot" },
+    { "pos": 2, "file": "3.wav", "playmode": "oneshot" },
+    { "pos": 3, "file": "4.wav", "playmode": "oneshot" }
+  ],
+  "presets": [
+    { "pos": 0, "list": [ { "effect": "SAMPLE" } ], "trigger": { "row": 0 } },
+    { "pos": 1, "list": [ { "effect": "SAMPLE" } ], "trigger": { "row": 0 } },
+    { "pos": 2, "list": [ { "effect": "SAMPLE" } ], "trigger": { "row": 0 } },
+    { "pos": 3, "list": [ { "effect": "SAMPLE" } ], "trigger": { "row": 0 } }
+  ]
+}
