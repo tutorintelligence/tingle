@@ -1,0 +1,31 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- tingle app icon: the menu bar grille motif at full size.
+       Teenage-Engineering-ish palette: warm cream, charcoal, TE orange.
+       Artwork sits in Apple's 824x824 rounded-rect grid on a 1024 canvas;
+       scripts/bundle.sh rasterizes packaging/icon_1024.png into the .icns. -->
+  <defs>
+    <clipPath id="grille">
+      <circle cx="512" cy="512" r="248"/>
+    </clipPath>
+  </defs>
+
+  <!-- squircle plate -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#F4F1EA"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="none"
+        stroke="#00000014" stroke-width="4"/>
+
+  <!-- microphone grille: charcoal stripes clipped to a circle,
+       stripe thickness == gap, same construction as the menu bar icon -->
+  <g clip-path="url(#grille)">
+    <rect x="220" y="272" width="584" height="44" fill="#262421"/>
+    <rect x="220" y="360" width="584" height="44" fill="#262421"/>
+    <rect x="220" y="448" width="584" height="44" fill="#262421"/>
+    <rect x="220" y="536" width="584" height="44" fill="#262421"/>
+    <rect x="220" y="624" width="584" height="44" fill="#262421"/>
+    <rect x="220" y="712" width="584" height="44" fill="#262421"/>
+  </g>
+
+  <!-- status dot, bottom-right of the grille, punched out of it -->
+  <circle cx="716" cy="716" r="118" fill="#F4F1EA"/>
+  <circle cx="716" cy="716" r="88" fill="#FF4E00"/>
+</svg>

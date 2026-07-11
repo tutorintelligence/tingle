@@ -29,6 +29,18 @@ mkdir -p "$APP/Contents/Frameworks"
 cp -R .build/release/Sparkle.framework "$APP/Contents/Frameworks/"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/tingle" 2>/dev/null || true
 
+# App icon: .icns from the checked-in 1024px render of docs/images/icon.svg
+# (regenerate with: qlmanage -t -s 1024 -o /tmp docs/images/icon.svg
+#  && mv /tmp/icon.svg.png packaging/icon_1024.png).
+ICONSET="$(mktemp -d)/tingle.iconset"
+mkdir -p "$ICONSET"
+for S in 16 32 128 256 512; do
+    sips -z "$S" "$S" packaging/icon_1024.png --out "$ICONSET/icon_${S}x${S}.png" > /dev/null
+    D=$((S * 2))
+    sips -z "$D" "$D" packaging/icon_1024.png --out "$ICONSET/icon_${S}x${S}@2x.png" > /dev/null
+done
+iconutil -c icns -o "$APP/Contents/Resources/tingle.icns" "$ICONSET"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,6 +56,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>tingle</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>tingle</string>
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>

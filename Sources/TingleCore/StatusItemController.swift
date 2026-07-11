@@ -27,7 +27,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         keyEquivalent: ""
     )
     private let axRepairItem = NSMenuItem(
-        title: "    Listed but not working? Repair…",
+        title: "    Shown as granted but broken? Repair…",
         action: #selector(repairAccessibilityPermission),
         keyEquivalent: ""
     )
