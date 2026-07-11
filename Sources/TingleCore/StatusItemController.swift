@@ -62,6 +62,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         updateTingleiskItems()
         updatePermissionItems()
         rebuildInputDeviceSubmenu()
+        registerLaunchAtLoginOnFirstRun()
         updateLaunchAtLoginState()
     }
 
@@ -427,6 +428,24 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func updateLaunchAtLoginState() {
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+    }
+
+    /// A menu bar utility that isn't running is doing nothing: the
+    /// installed app defaults launch-at-login ON at first launch (macOS
+    /// posts its own "added as login item" notice). One-shot — after this,
+    /// only the user's menu toggle changes it. Never for the dev binary
+    /// (SMAppService needs a bundled .app).
+    private func registerLaunchAtLoginOnFirstRun() {
+        guard Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
+              !UserDefaults.standard.bool(forKey: "launchAtLoginConfigured") else { return }
+        UserDefaults.standard.set(true, forKey: "launchAtLoginConfigured")
+        do {
+            try SMAppService.mainApp.register()
+            log.info("launch at login enabled by default on first run")
+        } catch {
+            log.error("first-run SMAppService register failed: \(String(describing: error))")
+        }
+        updateLaunchAtLoginState()
     }
 
     @objc private func toggleLaunchAtLogin() {
