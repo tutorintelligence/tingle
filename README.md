@@ -42,9 +42,32 @@ volume knob under the ting's lid up to around halfway.
 
 ## Getting started
 
+### Install from source (current method)
+
+tingle isn't on Homebrew yet (waiting on code-signing), so install from
+source. You need Xcode Command Line Tools (`xcode-select --install`) and
+macOS 26+ for dictation.
+
 ```sh
-brew install tutorintelligence/tap/tingle   # (not yet published)
+git clone https://github.com/tutorintelligence/tingle.git
+cd tingle
+swift build -c release
+./scripts/bundle.sh
+cp -r dist/tingle.app /Applications/
+open /Applications/tingle.app
 ```
+
+**Or just paste this to Claude Code / Codex and let it do everything:**
+
+> Clone https://github.com/tutorintelligence/tingle, build it with
+> `swift build -c release`, run `./scripts/bundle.sh`, copy
+> `dist/tingle.app` into /Applications, and launch it. Then tell me what
+> the menu bar shows and walk me through flashing my ting and granting the
+> microphone and accessibility permissions.
+
+Once tingle is on Homebrew this becomes `brew install tutorintelligence/tap/tingle`.
+
+### First run
 
 1. Launch tingle — a striped-circle icon appears in the menu bar.
 2. Plug the ting in over USB-C and choose **Flash EP…** from the menu. This
