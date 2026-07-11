@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: DetectionCoordinator!
     private var dictation: DictationController!
     private var statusItemController: StatusItemController!
+    private var permissions: PermissionsMonitor!
 
     private let log = Logger(subsystem: Log.subsystem, category: "app")
 
@@ -69,11 +70,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Wire the menu before starting so the initial state change is observed.
-        statusItemController = StatusItemController(configStore: configStore, coordinator: coordinator)
+        permissions = PermissionsMonitor()
+        statusItemController = StatusItemController(
+            configStore: configStore, coordinator: coordinator, permissions: permissions)
         dictation.onStatusChange = { [weak self] text in
             self?.statusItemController?.setDictationStatus(text)
         }
         coordinator.start()
+        permissions.startMonitoring()
+        // Surface any missing permission NOW, with the system dialogs that
+        // deep-link to the right pane — never let the user discover it as a
+        // squeeze that types nothing.
+        permissions.promptForMissing()
 
         log.info("tingle started (config at \(ConfigStore.configURL.path, privacy: .public))")
     }

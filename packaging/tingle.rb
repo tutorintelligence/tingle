@@ -11,7 +11,7 @@ cask "tingle" do
 
   auto_updates true # Sparkle owns updates; brew is install/discovery
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "tingle.app"
 

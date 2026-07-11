@@ -11,6 +11,10 @@ import AppKit
 ///   green dot     ting present (serial connected or beacon-locked)
 ///   red dot       trigger held / dictation live
 ///
+/// `needsAttention` overlays an orange "!" badge in the top-right corner —
+/// shown whenever a required permission (microphone / accessibility) is
+/// missing, independent of the detection dot.
+///
 /// The glyph is drawn in labelColor (adapts to light/dark); the dot needs
 /// real color, so these are NOT template images.
 enum MenuBarIcon {
@@ -36,7 +40,7 @@ enum MenuBarIcon {
         }
     }
 
-    static func image(dictating: Bool, dot: Dot, dimmed: Bool = false) -> NSImage {
+    static func image(dictating: Bool, dot: Dot, dimmed: Bool = false, needsAttention: Bool = false) -> NSImage {
         let image = NSImage(size: NSSize(width: side, height: side), flipped: true) { _ in
             let circleRect = NSRect(x: 1, y: 1, width: side - 2, height: side - 2)
             let circle = NSBezierPath(ovalIn: circleRect)
@@ -65,6 +69,22 @@ enum MenuBarIcon {
                 NSGraphicsContext.current?.compositingOperation = .sourceOver
                 color.set()
                 NSBezierPath(ovalIn: dotRect).fill()
+            }
+
+            if needsAttention {
+                // "!" badge, top-right (the dot owns bottom-right). Same
+                // punch-out trick so it reads over the grille.
+                let badgeRect = NSRect(x: side - 9, y: 0, width: 9, height: 9)
+                NSGraphicsContext.current?.compositingOperation = .destinationOut
+                NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1, dy: -1)).fill()
+                NSGraphicsContext.current?.compositingOperation = .sourceOver
+                NSColor.systemOrange.set()
+                NSBezierPath(ovalIn: badgeRect).fill()
+                NSColor.white.set()
+                // Flipped coords: stem hangs from the top of the badge.
+                let cx = badgeRect.midX
+                NSBezierPath(rect: NSRect(x: cx - 0.75, y: badgeRect.minY + 1.5, width: 1.5, height: 3.75)).fill()
+                NSBezierPath(ovalIn: NSRect(x: cx - 0.75, y: badgeRect.maxY - 3, width: 1.5, height: 1.5)).fill()
             }
             return true
         }

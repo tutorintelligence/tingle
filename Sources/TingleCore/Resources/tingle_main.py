@@ -38,9 +38,22 @@ exec(open('/rom/main.py').read())
 # Stock main.py has run: ui/spl/fx are imported, sam_pos/fx_pos are live,
 # python_callback is defined and registered.
 _stock_cb = python_callback
+
+# Millisecond clock for sleep detection; None when this build has no
+# ticks_ms (rotation-only healing then). CPython tests hit the
+# AttributeError branch and inject fakes.
+try:
+    import time
+    _tms = time.ticks_ms
+    _tdf = time.ticks_diff
+except (ImportError, AttributeError):
+    _tms = None
+    _tdf = None
+
 _t = {'sam': sam_pos, 'fx': fx_pos, 'hdl': ui.sw(4), 'cand': ui.sw(4),
       'cnt': 0, 'stk': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0,
-      'evq': []}
+      'evq': [], 'heal': [], 'rot': 0, 'hb': 0,
+      'lastms': _tms() if _tms else 0}
 
 # Ticks between queued tone triggers (~130ms @ 61Hz), leaving a ~50ms gap
 # after each 80ms sample — tightened for wireless event latency.
@@ -56,6 +69,16 @@ _T_HDL_DEBOUNCE = 3   # ~50ms; longer than bounce, shorter than any real press
 # period = 16% line duty; fast enough for ~5s auto-discovery and ~6s
 # loss detection without meaningfully delaying event chirps.
 _T_BEACON = 122
+# Slot self-heal: fw <= 1.0.5 reloads FACTORY samples after battery sleep
+# (TE changelog 1.0.6: "factory samples are no longer loaded after sleep";
+# observed 2026-07-11 on fw 1.0.4 — audible TE samples on every beacon,
+# ultrasound gone, Mac stuck searching). The engine itself survives sleep,
+# so it re-arms the slots: a big gap between ticks means we slept or
+# stalled -> reload all four tone WAVs (beacon slots 1,3 first, and the
+# beacon waits until healing is done); a slow rotation additionally
+# re-arms one slot every ~8s against any other clobber path.
+_T_HEAL = 488     # rotation period in ticks (~8s; full sweep ~32s)
+_WAKE_GAP = 500   # ms without a tick that implies sleep/stall
 
 
 def _say(*args):
@@ -87,6 +110,18 @@ def _chirp(first_slot, second_slot):
     _t['q'] += [first_slot, second_slot]
 
 
+def _reload(s):
+    # Re-arm one sample slot from the FAT tone WAV. Signature per the
+    # stock /rom/main.py: load_wav(slot, open binary file, playmode) —
+    # passing a path string instead of a file object wedges the VM.
+    try:
+        g = open('/fat/%d.wav' % (s + 1), 'rb')
+        spl.load_wav(s, g, 'oneshot')
+        g.close()
+    except:
+        pass
+
+
 def _tingle_cb(m):
     _stock_cb(m)
     t = m >> 16
@@ -96,6 +131,19 @@ def _tingle_cb(m):
     elif t == 2 and v == 0:
         _say('EVT white_up', sam_pos, fx_pos)
     elif t == 3:
+        if _tms:
+            _now = _tms()
+            if _tdf(_now, _t['lastms']) > _WAKE_GAP:
+                # Slept/stalled: firmware may have factory samples loaded.
+                # Beacon slots (1,3) first so the heartbeat heals soonest.
+                _t['heal'] = [1, 3, 0, 2]
+            _t['lastms'] = _now
+        _t['hb'] += 1
+        if _t['hb'] >= _T_HEAL:
+            _t['hb'] = 0
+            if not _t['heal']:
+                _t['heal'] = [_t['rot']]
+                _t['rot'] = (_t['rot'] + 1) % 4
         if sam_pos != _t['sam']:
             _t['sam'] = sam_pos
             _say('EVT mode', sam_pos)
@@ -136,7 +184,7 @@ def _tingle_cb(m):
         # Beacon heartbeat: fire only when the queue is idle so event
         # chirps always take precedence and sequences never interleave.
         _t['bcn'] += 1
-        if _t['bcn'] >= _T_BEACON and not _t['q']:
+        if _t['bcn'] >= _T_BEACON and not _t['q'] and not _t['heal']:
             _t['bcn'] = 0
             # Audio-only heartbeat; over serial the q() poll's state header
             # carries liveness + handle state instead.
@@ -151,6 +199,13 @@ def _tingle_cb(m):
             else:
                 spl.trigger(-1, _t['q'].pop(0), True)
                 _t['gap'] = _T_SECOND
+        elif _t['heal']:
+            if _t['gap'] > 0:
+                _t['gap'] -= 1
+            else:
+                # One slot per tick, and only in chirp silence (gap has
+                # fully drained) so a reload never cuts a playing tone.
+                _reload(_t['heal'].pop(0))
 
 
 def python_callback(m):
