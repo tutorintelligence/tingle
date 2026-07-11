@@ -55,7 +55,12 @@ its heartbeat.
 | squeeze handle | dictate live into the focused app; release to finish |
 | orange button | enter (send it) |
 | green button | erase the last dictated take (repeat for earlier takes) |
-| white button | unmapped — yours to configure |
+| white button | summon your agent — brings the first running AI coding app (Claude, Codex, Cursor, iTerm2, Terminal) to the front |
+
+Every one of these is just a default. tingle is configurable by design: the
+whole control scheme lives in the TOML file below, and any behavior — the
+summon list, what green erases, what orange sends, the dictation vocabulary —
+is yours to change.
 
 ## Configuration
 

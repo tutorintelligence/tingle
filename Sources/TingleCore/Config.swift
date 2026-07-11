@@ -107,6 +107,17 @@ public struct TingConfig: Decodable {
     /// words the recognizer's lexicon simply refuses to produce.
     public var replacements: [String: String]
 
+    /// The default white-button action: bring the first running AI coding
+    /// app to the front, ready to dictate into.
+    static let summonAgentScript = """
+for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
+  if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
+    open -a "$app"
+    exit 0
+  fi
+done
+"""
+
     static let `default` = TingConfig(
         toneFrequencies: [17500, 18000, 18500, 19000],
         vocabulary: ConfigStore.defaultVocabulary,
@@ -116,6 +127,7 @@ public struct TingConfig: Decodable {
             "modeChange": .eraseDictation,
             "fxChange": .keystroke(key: "return", modifiers: []),
             "triggerDown": .dictate,
+            "white": .shell(command: summonAgentScript),
         ],
         replacements: ["Tamil": "TOML"]
     )
@@ -159,13 +171,17 @@ public struct TingConfig: Decodable {
         try TOMLDecoder().decode(TingConfig.self, from: toml)
     }
 
-    func action(forKey key: String) -> TingAction? {
+    public func action(forKey key: String) -> TingAction? {
         mappings[key]
     }
 
-    func action(for event: TingEvent) -> TingAction? {
+    public func action(for event: TingEvent) -> TingAction? {
         guard let key = event.mappingKey else { return nil }
-        return action(forKey: key)
+        if let action = action(forKey: key) { return action }
+        // "white" is a catch-all for white presses in any green mode, used
+        // when the specific modeN key is unmapped.
+        if case .whitePress = event { return action(forKey: "white") }
+        return nil
     }
 }
 
@@ -582,18 +598,18 @@ public final class ConfigStore {
     # Green: scrap that take (press again for the take before it).
     modeChange = { type = "eraseDictation" }
 
-    # White is unmapped by default. Example: summon your agent — bring the
-    # first running AI coding app to the front, ready to dictate into.
-    # Uncomment (and adjust the app list) to enable:
-    #
-    # mode1 = { type = "shell", command = '''
-    # for app in "Claude" "Codex" "Terminal" "iTerm2"; do
-    #   if osascript -e "application \\"$app\\" is running" 2>/dev/null | grep -q true; then
-    #     open -a "$app"
-    #     exit 0
-    #   fi
-    # done
-    # ''' }
+    # White (any green mode): summon your agent — bring the first running
+    # AI coding app to the front, ready to dictate into. Adjust the app
+    # list to taste; "white" is a catch-all, or map mode1..mode4 for
+    # per-mode actions.
+    white = { type = "shell", command = '''
+    for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
+      if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
+        open -a "$app"
+        exit 0
+      fi
+    done
+    ''' }
     """
 
     private(set) var config: TingConfig = .default

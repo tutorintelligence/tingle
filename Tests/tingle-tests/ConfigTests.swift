@@ -14,7 +14,14 @@ func runConfigTests() {
         expectEqual(config.mappings["triggerDown"], .dictate, "config: default trigger mapping")
         expectEqual(config.mappings["modeChange"], .eraseDictation, "config: default green mapping")
         expectEqual(config.mappings["fxChange"], .keystroke(key: "return", modifiers: []), "config: default orange mapping")
-        expect(config.mappings["mode1"] == nil, "config: white unmapped by default")
+        expect(config.mappings["mode1"] == nil, "config: no per-mode white mappings by default")
+        if case .shell(let cmd)? = config.mappings["white"] {
+            expect(cmd.contains("open -a"), "config: white catch-all is the summon script")
+        } else {
+            expect(false, "config: white catch-all mapped by default")
+        }
+        expectEqual(config.action(for: .whitePress(mode: 3)), config.mappings["white"],
+                    "config: whitePress falls back to the white catch-all")
     }
     do { // multiline embedded script + all action types
         let toml = """
@@ -81,4 +88,20 @@ func runReplacementTests() {
 
     let config = try! TingConfig.parse(toml: ConfigStore.defaultTOML)
     expectEqual(config.replacements["Tamil"], "TOML", "config: default Tamil->TOML rule")
+}
+
+
+func runWhiteFallbackTests() {
+    let toml = """
+    [mappings]
+    white = { type = "keystroke", key = "escape" }
+    mode2 = { type = "keystroke", key = "space" }
+    """
+    let config = try! TingConfig.parse(toml: toml)
+    expectEqual(config.action(for: .whitePress(mode: 2)), .keystroke(key: "space", modifiers: []),
+                "white fallback: specific mode wins")
+    expectEqual(config.action(for: .whitePress(mode: 1)), .keystroke(key: "escape", modifiers: []),
+                "white fallback: catch-all covers unmapped modes")
+    expectEqual(config.action(for: .modeChanged(mode: 1)), nil,
+                "white fallback: catch-all never leaks to other events")
 }

@@ -33,6 +33,7 @@ runConfigTests()
 runTriggerReconcilerTests()
 runBatteryEstimateTests()
 runReplacementTests()
+runWhiteFallbackTests()
 
 print(failures == 0 ? "OK — \(passes) assertions passed"
                     : "FAILED — \(failures) failures, \(passes) passed")
