@@ -21,3 +21,11 @@ jobs:
         run: cmp device/tingle_main.py Sources/TingleCore/Resources/tingle_main.py
       - name: Bundle assembles
         run: ./scripts/bundle.sh
+      - name: Bundled app finds its resources
+        # Regression guard: SwiftPM's Bundle.module accessor crashed the
+        # CI-built .app on Flash EP (resource bundle unfindable outside
+        # the build machine). Move the .app away from the checkout so no
+        # local .build fallback can mask a broken layout.
+        run: |
+          cp -R dist/tingle.app /tmp/tingle-check.app
+          TINGLE_PAYLOAD_CHECK=1 /tmp/tingle-check.app/Contents/MacOS/tingle

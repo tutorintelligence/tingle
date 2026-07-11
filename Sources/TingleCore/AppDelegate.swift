@@ -27,6 +27,20 @@ public enum TingleApp {
     }
 
     public static func main() {
+        // Bundle self-test (used by CI on the assembled .app): verify the
+        // device payload is loadable from this build's real resource layout,
+        // print its size, and exit — regression guard for the Flash EP
+        // crash where a CI-built app couldn't find its resource bundle.
+        if ProcessInfo.processInfo.environment["TINGLE_PAYLOAD_CHECK"] != nil {
+            do {
+                let payload = try Flasher.devicePayload()
+                print("payload ok: \(payload.count) bytes")
+                exit(0)
+            } catch {
+                print("payload missing: \(error)")
+                exit(1)
+            }
+        }
         exitIfAlreadyRunning()
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
