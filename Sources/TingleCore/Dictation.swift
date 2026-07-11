@@ -71,7 +71,7 @@ final class DictationController {
             // Sessions can wedge during STARTUP (model download, analyzer
             // start, audio attach) where the finish-timeout can't reach.
             // Never let a zombie brick squeezing: force-abandon after 10s.
-            guard Date().timeIntervalSince(sessionStartedAt) > 10 else {
+            guard Date().timeIntervalSince(sessionStartedAt) > 4 else {
                 log.warning("triggerDown ignored: a dictation session is already active")
                 return
             }
