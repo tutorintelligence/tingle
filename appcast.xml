@@ -1,1 +1,14 @@
-<!-- appcast placeholder: populated by auto-release -->
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>tingle</title>
+    <item>
+      <title>v0.2.0</title>
+      <pubDate>Sat, 11 Jul 2026 22:52:46 +0000</pubDate>
+      <sparkle:version>0.2.0</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/tutorintelligence/tingle/releases/download/v0.2.0/tingle-0.2.0.zip" sparkle:edSignature="Tj9QFsVDc0N7Gtfza0j8gOqtA+hbaR4MCxycQ486xaqvwedwknktYlX3Nrbny6zu9i2upa5EtgqVNr2gjtRWAg==" length="1474299" type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
