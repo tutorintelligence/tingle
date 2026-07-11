@@ -62,6 +62,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         updateTingleiskItems()
         updatePermissionItems()
         rebuildInputDeviceSubmenu()
+        registerLaunchAtLoginOnFirstRun()
         updateLaunchAtLoginState()
     }
 
@@ -116,11 +117,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         editConfigItem.target = self
         menu.addItem(editConfigItem)
 
+        // Version + updates are always visible (discoverability); the
+        // check is only actionable in the installed .app — Sparkle cannot
+        // update a bare dev binary.
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let versionItem = NSMenuItem(
+            title: "tingle \(version ?? "dev build")", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
+        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         if updater.isActive {
-            let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
             updateItem.target = self
-            menu.addItem(updateItem)
+        } else {
+            updateItem.isEnabled = false
+            updateItem.title = "Check for Updates… (installed app only)"
         }
+        menu.addItem(updateItem)
 
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
@@ -415,6 +428,24 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func updateLaunchAtLoginState() {
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+    }
+
+    /// A menu bar utility that isn't running is doing nothing: the
+    /// installed app defaults launch-at-login ON at first launch (macOS
+    /// posts its own "added as login item" notice). One-shot — after this,
+    /// only the user's menu toggle changes it. Never for the dev binary
+    /// (SMAppService needs a bundled .app).
+    private func registerLaunchAtLoginOnFirstRun() {
+        guard Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
+              !UserDefaults.standard.bool(forKey: "launchAtLoginConfigured") else { return }
+        UserDefaults.standard.set(true, forKey: "launchAtLoginConfigured")
+        do {
+            try SMAppService.mainApp.register()
+            log.info("launch at login enabled by default on first run")
+        } catch {
+            log.error("first-run SMAppService register failed: \(String(describing: error))")
+        }
+        updateLaunchAtLoginState()
     }
 
     @objc private func toggleLaunchAtLogin() {

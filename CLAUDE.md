@@ -22,13 +22,17 @@ dictation, or the device payload. Add a regression test with every bug fix.
 
 ## Iteration workflow (with Josh)
 
-- After every code change: `pkill -f "debug/tingle"`, rebuild, relaunch
-  (`nohup .build/debug/tingle &`). Josh never manages instances himself.
-  Only one tingle may run at a time (dev binary OR /Applications/tingle.app);
-  a flock in App Support enforces it — a second launch exits immediately.
-  If the brew-installed app is running, quit it first
-  (`osascript -e 'tell application "tingle" to quit'`) or the dev binary
-  silently exits instead of starting.
+- Two blessed run states, switched with one command (Claude runs these;
+  Josh never manages instances):
+    - `scripts/dev.sh` — dev mode: quits the installed app, builds, runs
+      `.build/debug/tingle`. Use during any working session; rerun it
+      after every code change.
+    - `scripts/dev.sh --stop` — release mode: kills the dev binary and
+      reopens /Applications/tingle.app (brew-installed, Sparkle-updated).
+      ALWAYS return Josh to release mode at the end of a dev session.
+  Only one tingle may run at a time; a flock in App Support enforces it —
+  a second launch exits immediately, so switching modes without the
+  script silently no-ops.
 - Keep a log stream running for live debugging:
   `log stream --predicate 'subsystem == "com.tutorintelligence.tingle"' --info --debug`
   Note: info/debug lines do NOT persist for `log show` — stream to a file.
