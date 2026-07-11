@@ -87,6 +87,17 @@ final class DictationController {
         sessionStartedAt = Date()
         guard actionRunner.ensureAccessibility() else {
             log.error("Accessibility not granted; dictation cannot type into the frontmost app")
+            NSSound.beep()
+            flashStatus("⚠️ Accessibility needed — open the tingle menu")
+            return
+        }
+        // Same loud-failure rule for the microphone. .notDetermined falls
+        // through: the session's requestAccess shows the system dialog.
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .denied
+            || AVCaptureDevice.authorizationStatus(for: .audio) == .restricted {
+            log.error("Microphone denied; dictation cannot capture audio")
+            NSSound.beep()
+            flashStatus("⚠️ Microphone access needed — open the tingle menu")
             return
         }
 

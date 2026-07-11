@@ -109,6 +109,9 @@ final class ActionRunner {
     /// Also used by DictationController before starting live typing.
     func ensureAccessibility() -> Bool {
         if AXIsProcessTrusted() { return true }
+        // Loud failure: a press that silently does nothing reads as a
+        // broken app, not a permission problem.
+        NSSound.beep()
         if !promptedForAccessibility {
             promptedForAccessibility = true
             let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String

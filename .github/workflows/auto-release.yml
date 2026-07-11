@@ -10,7 +10,7 @@ name: Auto-release
 # Optional secrets (unsigned local-style build until these exist):
 #   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD  Developer ID signing
 #   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD  notarization
-#   TAP_PUSH_TOKEN  push access to tutorintelligence/homebrew-tap
+#   TAP_DEPLOY_KEY  SSH deploy key with write access to tutorintelligence/homebrew-tap
 #   SPARKLE_ED_PRIVATE_KEY  signs update zips for the Sparkle appcast
 on:
   push:
@@ -145,12 +145,15 @@ jobs:
             --title "$NEXT" --generate-notes
 
       - name: Bump Homebrew cask
-        if: steps.ver.outputs.next != '' && env.TAP_PUSH_TOKEN != ''
+        if: steps.ver.outputs.next != '' && env.TAP_DEPLOY_KEY != ''
         env:
-          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
         run: |
           NEXT="${{ steps.ver.outputs.next }}"; VERSION="${NEXT#v}"
           SHA=$(shasum -a 256 "dist/tingle-$VERSION.zip" | cut -d' ' -f1)
-          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/tutorintelligence/homebrew-tap.git" tap
+          mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap_key && chmod 600 ~/.ssh/tap_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes"
+          git clone git@github.com:tutorintelligence/homebrew-tap.git tap
           sed -E -i '' "s/version \"[^\"]+\"/version \"$VERSION\"/; s/sha256 \"[^\"]+\"/sha256 \"$SHA\"/" tap/Casks/tingle.rb
-          cd tap && git commit -am "tingle $VERSION" && git push
+          cd tap && git -c user.name=tingle-release -c user.email=noreply@tutorintelligence.com commit -am "tingle $VERSION" && git push

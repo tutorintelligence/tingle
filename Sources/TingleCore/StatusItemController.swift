@@ -11,18 +11,24 @@ import os
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let configStore: ConfigStore
     private let coordinator: DetectionCoordinator
+    private let permissions: PermissionsMonitor
 
     private let statusItem: NSStatusItem
     private let statusLineItem = NSMenuItem(title: BackendState.idle.menuDescription, action: nil, keyEquivalent: "")
     private let batteryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let micPermissionItem = NSMenuItem(
-        title: "Microphone access denied — open Settings",
-        action: #selector(openMicrophonePrivacySettings),
+        title: "⚠️ Grant microphone access…",
+        action: #selector(fixMicrophonePermission),
         keyEquivalent: ""
     )
     private let axPermissionItem = NSMenuItem(
-        title: "Accessibility not granted — open Settings",
-        action: #selector(openAccessibilityPrivacySettings),
+        title: "⚠️ Grant accessibility access…",
+        action: #selector(fixAccessibilityPermission),
+        keyEquivalent: ""
+    )
+    private let axRepairItem = NSMenuItem(
+        title: "    Listed but not working? Repair…",
+        action: #selector(repairAccessibilityPermission),
         keyEquivalent: ""
     )
     private let inputDeviceItem = NSMenuItem(title: "Input device", action: nil, keyEquivalent: "")
@@ -33,11 +39,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private let log = Logger(subsystem: Log.subsystem, category: "menu")
 
-    init(configStore: ConfigStore, coordinator: DetectionCoordinator) {
+    init(configStore: ConfigStore, coordinator: DetectionCoordinator, permissions: PermissionsMonitor) {
         self.configStore = configStore
         self.coordinator = coordinator
+        self.permissions = permissions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+
+        permissions.onChange = { [weak self] in
+            self?.updatePermissionItems()
+            self?.refreshIcon()
+        }
 
         if let button = statusItem.button {
             button.image = MenuBarIcon.image(dictating: false, dot: .none)
@@ -83,6 +95,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         axPermissionItem.target = self
         axPermissionItem.isHidden = true
         menu.addItem(axPermissionItem)
+        axRepairItem.target = self
+        axRepairItem.isHidden = true
+        menu.addItem(axRepairItem)
 
         inputDeviceItem.submenu = NSMenu()
         menu.addItem(inputDeviceItem)
@@ -167,8 +182,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func refreshIcon() {
+        let attention = !permissions.allGranted
         if flashStatus != nil {
-            statusItem.button?.image = MenuBarIcon.image(dictating: false, dot: .busy, dimmed: true)
+            statusItem.button?.image = MenuBarIcon.image(
+                dictating: false, dot: .busy, dimmed: true, needsAttention: attention)
             return
         }
         // Red/filled tracks the PHYSICAL squeeze only — status text like
@@ -188,7 +205,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 dot = .none
             }
         }
-        statusItem.button?.image = MenuBarIcon.image(dictating: dictating, dot: dot)
+        statusItem.button?.image = MenuBarIcon.image(
+            dictating: dictating, dot: dot, needsAttention: attention)
     }
 
     private func subscribeToCoordinator() {
@@ -275,22 +293,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Permission visibility
 
     private func updatePermissionItems() {
-        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        micPermissionItem.isHidden = !(micStatus == .denied || micStatus == .restricted)
-        axPermissionItem.isHidden = AXIsProcessTrusted()
+        permissions.refresh()
+        switch permissions.mic {
+        case .granted:
+            micPermissionItem.isHidden = true
+        case .undetermined:
+            micPermissionItem.isHidden = false
+            micPermissionItem.title = "⚠️ Grant microphone access…"
+        case .denied:
+            micPermissionItem.isHidden = false
+            micPermissionItem.title = "⚠️ Microphone denied — open Settings…"
+        }
+        axPermissionItem.isHidden = permissions.axTrusted
+        // The repair path (tccutil reset) only makes sense for the bundled
+        // app: the dev binary's accessibility grant belongs to the terminal.
+        axRepairItem.isHidden = permissions.axTrusted
+            || Bundle.main.bundleIdentifier != "com.tutorintelligence.tingle"
     }
 
-    @objc private func openMicrophonePrivacySettings() {
-        openPrivacyPane("Privacy_Microphone")
+    @objc private func fixMicrophonePermission() {
+        permissions.fixMicrophone()
     }
 
-    @objc private func openAccessibilityPrivacySettings() {
-        openPrivacyPane("Privacy_Accessibility")
+    @objc private func fixAccessibilityPermission() {
+        permissions.fixAccessibility()
     }
 
-    private func openPrivacyPane(_ anchor: String) {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
-        NSWorkspace.shared.open(url)
+    @objc private func repairAccessibilityPermission() {
+        axRepairItem.isEnabled = false
+        permissions.repairAccessibility { [weak self] in
+            self?.axRepairItem.isEnabled = true
+            self?.updatePermissionItems()
+        }
     }
 
     // MARK: - TINGDISK

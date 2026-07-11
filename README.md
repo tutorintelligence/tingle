@@ -42,11 +42,23 @@ volume knob under the ting's lid up to around halfway.
 
 ## Getting started
 
-### Install from source (current method)
+### Install with Homebrew (recommended)
 
-tingle isn't on Homebrew yet (waiting on code-signing), so install from
-source. You need Xcode Command Line Tools (`xcode-select --install`) and
-macOS 26+ for dictation.
+```sh
+brew install --cask --no-quarantine tutorintelligence/tap/tingle
+```
+
+`--no-quarantine` is needed because tingle isn't code-signed yet (Apple
+Developer enrollment in progress): without it, Gatekeeper blocks the app
+with "Apple could not verify tingle is free of malware". If you'd rather
+keep the quarantine flag, install normally and approve the app under
+System Settings → Privacy & Security → "Open Anyway". Once signing lands,
+the flag goes away and updates keep permissions intact.
+
+### Install from source
+
+You need Xcode Command Line Tools (`xcode-select --install`) and macOS 26+
+for dictation.
 
 ```sh
 git clone https://github.com/tutorintelligence/tingle.git
@@ -59,13 +71,10 @@ open /Applications/tingle.app
 
 **Or just paste this to Claude Code / Codex and let it do everything:**
 
-> Clone https://github.com/tutorintelligence/tingle, build it with
-> `swift build -c release`, run `./scripts/bundle.sh`, copy
-> `dist/tingle.app` into /Applications, and launch it. Then tell me what
-> the menu bar shows and walk me through flashing my ting and granting the
+> Install tingle with `brew install --cask --no-quarantine
+> tutorintelligence/tap/tingle` and launch it. Then tell me what the menu
+> bar shows and walk me through flashing my ting and granting the
 > microphone and accessibility permissions.
-
-Once tingle is on Homebrew this becomes `brew install tutorintelligence/tap/tingle`.
 
 ### First run
 
@@ -75,7 +84,9 @@ Once tingle is on Homebrew this becomes `brew install tutorintelligence/tap/ting
    disk (existing contents are backed up first). Power-cycle the ting when
    prompted: press the small button above its USB-C port, then push the
    handle to start it.
-3. Grant the two permission prompts (microphone, accessibility).
+3. Grant the two permission prompts (microphone, accessibility) — tingle
+   asks at launch, and the menu bar icon wears an orange "!" badge with
+   fix-it menu items until both are granted.
 4. Squeeze the trigger and talk. Words appear where your cursor is.
 
 The menu bar dot tells you everything: green = ting present (USB, or heard

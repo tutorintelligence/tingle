@@ -24,7 +24,11 @@ dictation, or the device payload. Add a regression test with every bug fix.
 
 - After every code change: `pkill -f "debug/tingle"`, rebuild, relaunch
   (`nohup .build/debug/tingle &`). Josh never manages instances himself.
-  Only one tingle may run at a time (dev binary OR /Applications/tingle.app).
+  Only one tingle may run at a time (dev binary OR /Applications/tingle.app);
+  a flock in App Support enforces it — a second launch exits immediately.
+  If the brew-installed app is running, quit it first
+  (`osascript -e 'tell application "tingle" to quit'`) or the dev binary
+  silently exits instead of starting.
 - Keep a log stream running for live debugging:
   `log stream --predicate 'subsystem == "com.tutorintelligence.tingle"' --info --debug`
   Note: info/debug lines do NOT persist for `log show` — stream to a file.
@@ -65,6 +69,14 @@ dictation, or the device payload. Add a regression test with every bug fix.
 - The Cubilux HLMS-C4 exposes MIC IN and Line IN input devices; ultrasonic
   chirps bleed across jacks. Device ranking must prefer "line in" names
   and the beacon scanner audits the top-ranked jack before locking.
+- fw <= 1.0.5 reloads FACTORY samples after battery sleep (TE fixed in
+  1.0.6), silencing the chirp protocol while the engine keeps beaconing —
+  audible TE samples every 2s = this. The payload self-heals (tick-gap
+  wake detection + slow rotation reload). Upgrading the ting to fw 1.0.8
+  also fixes it at the source (untested with the payload).
+- spl.load_wav takes (slot, OPEN BINARY FILE, playmode) — passing a path
+  string wedges the VM (needs the power ritual). Reference for the whole
+  device API: the stock /rom/main.py inside TE's firmware zip.
 - Beacons carry handle state on both transports ("EVT beacon 0|1" over
   serial; (1,3)/(3,1) chirp pairs over audio). A LEGACY stateless serial
   beacon line must never be read as "released" (regression: synthesized
@@ -80,6 +92,8 @@ dictation, or the device payload. Add a regression test with every bug fix.
 - TCC (mic/accessibility) keys off the code signature: ad-hoc rebuilds of
   the .app re-prompt every time until Developer ID signing lands. The dev
   binary attributes permissions to the invoking terminal instead.
+  PermissionsMonitor owns the UX: "!" icon badge, fix-it menu items, launch
+  prompts, and a tccutil-reset repair for the stale-Accessibility-row case.
 
 ## Contribution flow
 
@@ -107,4 +121,4 @@ tutorintelligence/homebrew-tap. `tools/test_next_version.py` covers the
 version math. Until the Apple Developer secrets land the build is unsigned
 but releases still cut. Optional secrets: MACOS_CERT_P12_BASE64,
 MACOS_CERT_PASSWORD, NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD,
-TAP_PUSH_TOKEN.
+TAP_DEPLOY_KEY (SSH deploy key that pushes the cask bump to tutorintelligence/homebrew-tap).
