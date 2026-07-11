@@ -499,6 +499,8 @@ public final class ConfigStore {
         "mypy",
         "ruff",
         "Tutor",
+        "README",
+        "semver",
     ]
 
     public static let defaultTOML = """
@@ -593,6 +595,7 @@ public final class ConfigStore {
       "alembic", "SQLAlchemy", "pytest", "mypy",
       "ruff",
       "Tutor",
+      "README", "semver",
     ]
 
     # Corrections applied to finalized dictation text (word-boundary,
