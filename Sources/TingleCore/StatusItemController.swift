@@ -116,11 +116,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         editConfigItem.target = self
         menu.addItem(editConfigItem)
 
+        // Version + updates are always visible (discoverability); the
+        // check is only actionable in the installed .app — Sparkle cannot
+        // update a bare dev binary.
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let versionItem = NSMenuItem(
+            title: "tingle \(version ?? "dev build")", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
+        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         if updater.isActive {
-            let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
             updateItem.target = self
-            menu.addItem(updateItem)
+        } else {
+            updateItem.isEnabled = false
+            updateItem.title = "Check for Updates… (installed app only)"
         }
+        menu.addItem(updateItem)
 
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
