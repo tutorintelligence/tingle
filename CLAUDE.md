@@ -98,7 +98,11 @@ Claude cannot push to main directly.
 the next semver from the merge subject via `tools/next_version.py`
 (feat→minor, fix/perf/refactor→patch, `!`/BREAKING→major, chore/docs/ci/
 build/test/style→no release), then builds → signs+notarizes (if the Apple
-secrets exist) → tags → GitHub Release with the .app zip → bumps the cask in
+secrets exist) → signs the zip with the Sparkle EdDSA key and publishes
+appcast.xml to the gh-pages branch (in-app auto-updates; feed URL and
+public key live in scripts/bundle.sh's Info.plist; private key is in the
+SPARKLE_ED_PRIVATE_KEY repo secret and Josh's login keychain, account
+"tingle") → tags → GitHub Release with the .app zip → bumps the cask in
 tutorintelligence/homebrew-tap. `tools/test_next_version.py` covers the
 version math. Until the Apple Developer secrets land the build is unsigned
 but releases still cut. Optional secrets: MACOS_CERT_P12_BASE64,

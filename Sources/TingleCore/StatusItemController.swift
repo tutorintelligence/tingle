@@ -29,6 +29,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let flashItem = NSMenuItem(title: "Flash EP…", action: #selector(flashEP), keyEquivalent: "")
     private let restoreItem = NSMenuItem(title: "Restore stock", action: #selector(restoreStock), keyEquivalent: "")
     private let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    private let updater = Updater()
 
     private let log = Logger(subsystem: Log.subsystem, category: "menu")
 
@@ -99,6 +100,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let editConfigItem = NSMenuItem(title: "Edit config…", action: #selector(openConfigFile), keyEquivalent: ",")
         editConfigItem.target = self
         menu.addItem(editConfigItem)
+
+        if updater.isActive {
+            let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        }
 
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
@@ -361,6 +368,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Config file
+
+    @objc private func checkForUpdates() {
+        updater.checkForUpdates()
+    }
 
     @objc private func openConfigFile() {
         NSWorkspace.shared.open(ConfigStore.configURL)

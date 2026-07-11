@@ -24,6 +24,11 @@ cp .build/release/tingle "$APP/Contents/MacOS/tingle"
 # Bundle.main.resourceURL inside an .app.
 cp -R .build/release/*.bundle "$APP/Contents/Resources/"
 
+# Sparkle: embed the framework and point the binary's rpath at it.
+mkdir -p "$APP/Contents/Frameworks"
+cp -R .build/release/Sparkle.framework "$APP/Contents/Frameworks/"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/tingle" 2>/dev/null || true
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,6 +51,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
+    <true/>
+    <key>SUFeedURL</key>
+    <string>https://tutorintelligence.github.io/tingle/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>3BlTef+CpeHVRaFJfuvpqt1XGbVZe1HDPo3C127U70E=</string>
+    <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>tingle listens to your line-in to detect the ting's ultrasonic signals and to transcribe dictation from its microphone.</string>

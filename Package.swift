@@ -7,12 +7,16 @@ let package = Package(
         .macOS(.v13)
     ],
     dependencies: [
-        .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.5.0")
+        .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.5.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")
     ],
     targets: [
         .target(
             name: "TingleCore",
-            dependencies: [.product(name: "TOMLKit", package: "TOMLKit")],
+            dependencies: [
+                .product(name: "TOMLKit", package: "TOMLKit"),
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/TingleCore",
             resources: [
                 // Device event-engine payload, shipped to TINGDISK as main.py

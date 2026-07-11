@@ -11,6 +11,7 @@ name: Auto-release
 #   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD  Developer ID signing
 #   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD  notarization
 #   TAP_PUSH_TOKEN  push access to tutorintelligence/homebrew-tap
+#   SPARKLE_ED_PRIVATE_KEY  signs update zips for the Sparkle appcast
 on:
   push:
     branches: [main]
@@ -88,6 +89,49 @@ jobs:
         run: |
           VERSION="${{ steps.ver.outputs.next }}"; VERSION="${VERSION#v}"
           ditto -c -k --keepParent dist/tingle.app "dist/tingle-$VERSION.zip"
+
+      - name: Sparkle appcast (sign zip, publish to gh-pages)
+        if: steps.ver.outputs.next != '' && env.SPARKLE_KEY != ''
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEXT="${{ steps.ver.outputs.next }}"; VERSION="${NEXT#v}"
+          ZIP="dist/tingle-$VERSION.zip"
+          curl -sL -o /tmp/sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz
+          mkdir -p /tmp/sparkle && tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          SIG_LINE=$(echo "$SPARKLE_KEY" | /tmp/sparkle/bin/sign_update --ed-key-file - "$ZIP")
+          DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
+          URL="https://github.com/tutorintelligence/tingle/releases/download/$NEXT/tingle-$VERSION.zip"
+          # Newest-item-only appcast: Sparkle only needs the latest.
+          cat > /tmp/appcast.xml <<APPCAST
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>tingle</title>
+              <item>
+                <title>$NEXT</title>
+                <pubDate>$DATE</pubDate>
+                <sparkle:version>$VERSION</sparkle:version>
+                <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+                <enclosure url="$URL" $SIG_LINE type="application/octet-stream"/>
+              </item>
+            </channel>
+          </rss>
+          APPCAST
+          sed -i '' 's/^          //' /tmp/appcast.xml
+          git config user.name "tingle-release"
+          git config user.email "noreply@tutorintelligence.com"
+          if git fetch origin gh-pages 2>/dev/null; then
+            git worktree add /tmp/pages origin/gh-pages
+          else
+            git worktree add --detach /tmp/pages
+            cd /tmp/pages && git checkout --orphan gh-pages && git rm -rf . 2>/dev/null || true
+            cd "$GITHUB_WORKSPACE"
+          fi
+          cp /tmp/appcast.xml /tmp/pages/appcast.xml
+          cd /tmp/pages && git add appcast.xml && git commit -m "appcast $NEXT" && git push origin HEAD:gh-pages
 
       - name: Tag and GitHub Release
         if: steps.ver.outputs.next != ''
