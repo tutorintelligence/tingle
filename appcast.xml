@@ -3,12 +3,12 @@
   <channel>
     <title>tingle</title>
     <item>
-      <title>v0.3.0</title>
-      <pubDate>Sat, 11 Jul 2026 23:30:11 +0000</pubDate>
-      <sparkle:version>0.3.0</sparkle:version>
-      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <title>v0.4.0</title>
+      <pubDate>Sat, 11 Jul 2026 23:41:40 +0000</pubDate>
+      <sparkle:version>0.4.0</sparkle:version>
+      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/tutorintelligence/tingle/releases/download/v0.3.0/tingle-0.3.0.zip" sparkle:edSignature="vwy64rqqzQ6p2dSPj/o8yHqtM58Kw9ggAk6X9bvLZnQb+6DCKWv8AorBfNtfF/fasXbwn2OHuIanDVrkGlZxAw==" length="1483342" type="application/octet-stream"/>
+      <enclosure url="https://github.com/tutorintelligence/tingle/releases/download/v0.4.0/tingle-0.4.0.zip" sparkle:edSignature="YtQO4oQllsCeMcW4U/9P6zJzSiOfU72X4+cl4N3ENgdMJVlnZz0uIjrcp7sJRogBAnFsnSCWPl8JuG9AXfhpCQ==" length="1484686" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
