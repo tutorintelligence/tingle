@@ -15,6 +15,14 @@ cask "tingle" do
 
   app "tingle.app"
 
+  # Unsigned until Apple Developer enrollment completes: strip the
+  # quarantine flag so Gatekeeper doesn't block the first launch.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/tingle.app"],
+                   must_succeed: false
+  end
+
   uninstall quit: "com.tutorintelligence.tingle"
 
   zap trash: [
