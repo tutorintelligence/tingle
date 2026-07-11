@@ -88,6 +88,9 @@ func runReplacementTests() {
 
     let config = try! TingConfig.parse(toml: ConfigStore.defaultTOML)
     expectEqual(config.replacements["Tamil"], "TOML", "config: default Tamil->TOML rule")
+    expectEqual(config.replacements["clawed"], "Claude", "config: default clawed->Claude rule")
+    expectEqual(TingConfig.applyReplacements("open clawed code", config.replacements),
+                "open Claude code", "replacements: clawed corrected in context")
 }
 
 

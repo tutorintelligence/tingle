@@ -129,7 +129,7 @@ done
             "triggerDown": .dictate,
             "white": .shell(command: summonAgentScript),
         ],
-        replacements: ["Tamil": "TOML"]
+        replacements: ["Tamil": "TOML", "clawed": "Claude", "Clawed": "Claude"]
     )
 
     init(toneFrequencies: [Double], vocabulary: [String],
@@ -587,6 +587,8 @@ public final class ConfigStore {
     # no matter how much vocabulary biasing it gets.
     [replacements]
     "Tamil" = "TOML"
+    "clawed" = "Claude"
+    "Clawed" = "Claude"
 
     [mappings]
     # Squeeze to dictate into whatever app is focused.
