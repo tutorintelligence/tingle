@@ -32,6 +32,14 @@ final class PermissionsMonitor {
     init() {
         mic = Self.readMic()
         axTrusted = AXIsProcessTrusted()
+        noteGrant()
+    }
+
+    /// Remember that this bundle id has held the AX grant at least once —
+    /// the marker that later distinguishes "stale row after an update"
+    /// from "never asked".
+    private func noteGrant() {
+        if axTrusted { UserDefaults.standard.set(true, forKey: "axEverGranted") }
     }
 
     func startMonitoring() {
@@ -66,6 +74,7 @@ final class PermissionsMonitor {
         log.info("permissions changed: mic \(String(describing: newMic), privacy: .public) ax \(newAX)")
         mic = newMic
         axTrusted = newAX
+        noteGrant()
         DispatchQueue.main.async { self.onChange?() }
     }
 
@@ -82,7 +91,23 @@ final class PermissionsMonitor {
             }
         }
         if !axTrusted {
-            promptAccessibility()
+            // Ad-hoc rebuilds orphan the Accessibility row: Settings shows
+            // tingle checked, AXIsProcessTrusted() says no. If we ever held
+            // the grant, untrusted-now can only mean that stale row — so
+            // repair silently (reset + fresh prompt) instead of hoping the
+            // user discovers the menu item. Once per version, so a genuine
+            // manual revoke costs at most one extra prompt per update.
+            let d = UserDefaults.standard
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+            if Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
+               d.bool(forKey: "axEverGranted"),
+               d.string(forKey: "axAutoRepairVersion") != version {
+                d.set(version, forKey: "axAutoRepairVersion")
+                log.info("stale accessibility row (granted before, untrusted now) — auto-repairing")
+                repairAccessibility {}
+            } else {
+                promptAccessibility()
+            }
         }
     }
 
