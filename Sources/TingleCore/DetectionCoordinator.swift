@@ -198,6 +198,9 @@ final class DetectionCoordinator {
     private func startSerial(path: String) {
         let backend = SerialBackend(path: path)
         backend.onEvent = { [weak self] event in self?.handleBackendEvent(event, viaAudio: false) }
+        // Poll-header state: authoritative held-state every ~150ms —
+        // feeds the same reconciler healing as audio beacons, but faster.
+        backend.onStateHint = { [weak self] held in self?.onTriggerHint?(held) }
         backend.onBattery = { [weak self] volts in self?.onBattery?(volts) }
         backend.onDisconnect = { [weak self] in
             guard let self else { return }

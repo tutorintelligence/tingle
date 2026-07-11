@@ -39,7 +39,8 @@ exec(open('/rom/main.py').read())
 # python_callback is defined and registered.
 _stock_cb = python_callback
 _t = {'sam': sam_pos, 'fx': fx_pos, 'hdl': ui.sw(4), 'cand': ui.sw(4),
-      'cnt': 0, 'stk': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0}
+      'cnt': 0, 'stk': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0,
+      'evq': []}
 
 # Ticks between queued tone triggers (~130ms @ 61Hz), leaving a ~50ms gap
 # after each 80ms sample — tightened for wireless event latency.
@@ -58,13 +59,25 @@ _T_BEACON = 122
 
 
 def _say(*args):
-    # Print only when USB power is present; guards against any chance of
-    # blocking on an unread CDC buffer while on batteries.
-    try:
-        if ui.get_vbus():
-            print(*args)
-    except:
-        pass
+    # NEVER print from the callback: a CDC write can block the whole VM
+    # forever if the host vanishes mid-write (USB-C data pins disconnect
+    # before power pins, so a vbus guard races — observed as a full device
+    # freeze at unplug, 2026-07-11). Events queue here and are printed
+    # only inside q(), which the host calls over the REPL — output then
+    # happens microseconds after proven-live host bytes.
+    _t['evq'].append(' '.join(str(a) for a in args))
+    if len(_t['evq']) > 64:
+        _t['evq'].pop(0)
+
+
+def q():
+    # Host poll (the Mac sends "q()\r" every ~150ms). One state header --
+    # trigger/mode/fx/battery -- then any queued events. Printing here is
+    # safe by construction: the host just wrote to us.
+    print('S', 1 if _t['hdl'] else 0, sam_pos, fx_pos, ui.get_vbat())
+    for _line in _t['evq']:
+        print(_line)
+    _t['evq'] = []
 
 
 def _chirp(first_slot, second_slot):
@@ -125,9 +138,8 @@ def _tingle_cb(m):
         _t['bcn'] += 1
         if _t['bcn'] >= _T_BEACON and not _t['q']:
             _t['bcn'] = 0
-            # Stateful on BOTH transports: the trailing 0/1 is handle state,
-            # so a lost trigger edge self-heals over serial too.
-            _say('EVT beacon', 1 if _t['hdl'] else 0)
+            # Audio-only heartbeat; over serial the q() poll's state header
+            # carries liveness + handle state instead.
             if _t['hdl']:
                 _chirp(3, 1)
             else:

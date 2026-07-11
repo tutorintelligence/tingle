@@ -5,29 +5,31 @@ import os
 /// Passive line reader for the ting's USB CDC device using plain POSIX I/O
 /// (no external dependencies).
 ///
-/// A flashed device (FLASH EP ships device/tingle_main.py as /fat/main.py)
-/// proactively prints event lines — no REPL grab, no Ctrl+C, no injection;
-/// the running program is never interrupted:
+/// HOST-DRIVEN POLLING: we write "q()\r" to the device REPL every ~150ms;
+/// the flashed payload (device/tingle_main.py) replies with one state
+/// header plus any queued events:
 ///
-///   "EVT white_down <sam_pos> <fx_pos>"
-///   "EVT white_up <sam_pos> <fx_pos>"
-///   "EVT mode <sam_pos>"          (green-button mode change)
-///   "EVT fx <fx_pos>"             (orange-button FX change)
-///   "EVT trigger_down"            (handle squeezed; device mic live)
-///   "EVT erase"                   (3 rapid squeezes = erase gesture)
-///   "EVT trigger_up"              (handle released)
+///   "S <held 0|1> <sam_pos> <fx_pos> <vbat>"
+///   "EVT white_down <sam_pos> <fx_pos>" / "EVT white_up ..."
+///   "EVT mode <sam_pos>" / "EVT fx <fx_pos>"
+///   "EVT trigger_down" / "EVT trigger_up"
 ///
-/// Battery: the device REPL is idle between callback events, so we write
-/// "print('VBAT',ui.get_vbat())\r" every 30s and parse the "VBAT <float>"
-/// response (tolerating the command echo).
+/// The device NEVER prints unprompted: a CDC write with the host gone
+/// mid-unplug can block its whole VM (observed as a full device freeze;
+/// USB-C data pins disconnect before power, so vbus-guarding races).
+/// Polling also gives ~150ms trigger-state healing (vs 2s beacons) and
+/// battery for free. Legacy payloads answer q() with a NameError we
+/// ignore, and their proactive "EVT ..." lines still parse.
 ///
 /// IMPORTANT: never send Ctrl+D (0x04, soft reset) — it re-enumerates USB and
 /// a battery-less unit stays down until the power-button + handle ritual
 /// (DESIGN.md). On stop/disconnect we just close the port.
 final class SerialBackend: TingBackend {
     var onEvent: ((TingEvent) -> Void)?
-    /// Battery voltage (volts), delivered on the main queue every ~30s.
+    /// Battery voltage (volts), delivered on the main queue (throttled).
     var onBattery: ((Double) -> Void)?
+    /// Live handle state from each poll's header (true = held).
+    var onStateHint: ((Bool) -> Void)?
     /// Fired once (main queue) when the port fails or the device goes away.
     var onDisconnect: (() -> Void)?
 
@@ -46,7 +48,7 @@ final class SerialBackend: TingBackend {
     private var didFail = false
     private let log = Logger(subsystem: Log.subsystem, category: "serial")
 
-    private static let batteryInterval: TimeInterval = 30
+    private static let pollInterval: TimeInterval = 0.15
     private static let maxLineBytes = 4096
 
     init(path: String) {
@@ -100,10 +102,11 @@ final class SerialBackend: TingBackend {
         source.resume()
         readSource = source
 
-        // Battery request: once shortly after connect, then every 30s.
+        // Host-driven poll: ~150ms cadence drives events, state healing,
+        // and battery all through q().
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 1, repeating: Self.batteryInterval)
-        timer.setEventHandler { [weak self] in self?.requestBattery() }
+        timer.schedule(deadline: .now() + 0.3, repeating: Self.pollInterval)
+        timer.setEventHandler { [weak self] in self?.pollDevice() }
         timer.resume()
         batteryTimer = timer
     }
@@ -150,8 +153,14 @@ final class SerialBackend: TingBackend {
         let line = rawLine.trimmingCharacters(in: .whitespaces)
         guard !line.isEmpty else { return }
 
-        // Echo of our own battery command (the idle REPL echoes what we write).
-        if line.contains("print(") { return }
+        // Echo of our own poll command (the idle REPL echoes what we write).
+        if line.contains("q()") || line.contains("print(") { return }
+
+        // Poll state header: "S <held> <sam> <fx> <vbat>".
+        if line.hasPrefix("S ") || line.range(of: ">>> S ") != nil {
+            parseStateHeader(line)
+            return
+        }
 
         // Lines may interleave with other device output; match by prefix
         // anywhere in the line (e.g. a stray prompt before "EVT ...").
@@ -219,12 +228,27 @@ final class SerialBackend: TingBackend {
         DispatchQueue.main.async { self.onEvent?(event) }
     }
 
-    // MARK: - Battery request
+    // MARK: - Host poll
 
-    private func requestBattery() {
+    private func pollDevice() {
         guard fd >= 0 else { return }
-        if !writeBytes("print('VBAT',ui.get_vbat())\r") {
+        if !writeBytes("q()\r") {
             fail()
+        }
+    }
+
+    private var lastBatteryReport = Date.distantPast
+
+    private func parseStateHeader(_ line: String) {
+        // Tolerate a leading prompt: take everything from "S ".
+        guard let range = line.range(of: "S ") else { return }
+        let tokens = line[range.upperBound...].split(separator: " ")
+        guard tokens.count >= 4, let held = Int(tokens[0]), held == 0 || held == 1 else { return }
+        DispatchQueue.main.async { self.onStateHint?(held == 1) }
+        if let volts = Double(tokens[3]), Date().timeIntervalSince(lastBatteryReport) > 30 {
+            lastBatteryReport = Date()
+            log.debug("battery: \(volts) V")
+            DispatchQueue.main.async { self.onBattery?(volts) }
         }
     }
 
