@@ -1,0 +1,112 @@
+name: Auto-release
+# On every push to main (a squash-merged PR), derive the next semantic
+# version from the Conventional-Commit merge subject. If a release is
+# warranted, build → (sign+notarize if secrets present) → tag → GitHub
+# Release with the .app zip → bump the Homebrew cask (if tap token present).
+#
+# Self-contained on purpose: a tag pushed by GITHUB_TOKEN cannot trigger a
+# separate workflow, so tagging and releasing live in one job.
+#
+# Optional secrets (unsigned local-style build until these exist):
+#   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD  Developer ID signing
+#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD  notarization
+#   TAP_PUSH_TOKEN  push access to tutorintelligence/homebrew-tap
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version-logic self-test
+        run: cd tools && python3 test_next_version.py
+
+      - name: Compute next version
+        id: ver
+        run: |
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          SUBJECT=$(git log -1 --pretty=%s)
+          echo "latest=${LATEST:-none} subject=$SUBJECT"
+          NEXT=$(python3 tools/next_version.py "$LATEST" "$SUBJECT")
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          if [ -z "$NEXT" ]; then echo "No release for this commit type."; fi
+
+      - name: Tests
+        if: steps.ver.outputs.next != ''
+        run: |
+          swift run tingle-tests
+          python3 tools/test_payload.py
+          cmp device/tingle_main.py Sources/TingleCore/Resources/tingle_main.py
+
+      - name: Import signing certificate
+        if: steps.ver.outputs.next != '' && env.CERT != ''
+        env:
+          CERT: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PW: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          echo "$CERT" | base64 --decode > cert.p12
+          security create-keychain -p tmppass build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p tmppass build.keychain
+          security import cert.p12 -k build.keychain -P "$CERT_PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k tmppass build.keychain
+
+      - name: Build bundle (signed if cert present)
+        if: steps.ver.outputs.next != ''
+        env:
+          CERT: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+        run: |
+          VERSION="${{ steps.ver.outputs.next }}"; VERSION="${VERSION#v}"
+          if [ -n "$CERT" ]; then
+            VERSION="$VERSION" CODESIGN_IDENTITY="Developer ID Application" ./scripts/bundle.sh
+          else
+            VERSION="$VERSION" ./scripts/bundle.sh
+          fi
+
+      - name: Notarize and staple
+        if: steps.ver.outputs.next != '' && env.NOTARY_APPLE_ID != ''
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist/tingle.app dist/notarize.zip
+          xcrun notarytool submit dist/notarize.zip --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD" --wait
+          xcrun stapler staple dist/tingle.app
+
+      - name: Package artifact
+        if: steps.ver.outputs.next != ''
+        run: |
+          VERSION="${{ steps.ver.outputs.next }}"; VERSION="${VERSION#v}"
+          ditto -c -k --keepParent dist/tingle.app "dist/tingle-$VERSION.zip"
+
+      - name: Tag and GitHub Release
+        if: steps.ver.outputs.next != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEXT="${{ steps.ver.outputs.next }}"; VERSION="${NEXT#v}"
+          git tag "$NEXT"
+          git push origin "$NEXT"
+          gh release create "$NEXT" "dist/tingle-$VERSION.zip" \
+            --title "$NEXT" --generate-notes
+
+      - name: Bump Homebrew cask
+        if: steps.ver.outputs.next != '' && env.TAP_PUSH_TOKEN != ''
+        env:
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+        run: |
+          NEXT="${{ steps.ver.outputs.next }}"; VERSION="${NEXT#v}"
+          SHA=$(shasum -a 256 "dist/tingle-$VERSION.zip" | cut -d' ' -f1)
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/tutorintelligence/homebrew-tap.git" tap
+          sed -E -i '' "s/version \"[^\"]+\"/version \"$VERSION\"/; s/sha256 \"[^\"]+\"/sha256 \"$SHA\"/" tap/Casks/tingle.rb
+          cd tap && git commit -am "tingle $VERSION" && git push
