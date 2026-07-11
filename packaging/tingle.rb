@@ -9,6 +9,8 @@ cask "tingle" do
   desc "Menu bar companion for the Teenage Engineering EP-2350 'ting': dictation, macros, ultrasonic button detection"
   homepage "https://github.com/tutorintelligence/tingle"
 
+  auto_updates true # Sparkle owns updates; brew is install/discovery
+
   depends_on macos: ">= :ventura"
 
   app "tingle.app"

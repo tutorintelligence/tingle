@@ -3,7 +3,31 @@ import os
 
 /// Public entry point: the executable target is a one-liner calling this.
 public enum TingleApp {
+    /// Held for the process lifetime; the advisory lock it carries enforces
+    /// the single-instance rule.
+    private static var lockFD: Int32 = -1
+
+    /// Only one tingle may run at a time (dev binary OR installed .app):
+    /// two instances would double-type dictation and fight over the serial
+    /// port. LaunchServices only dedupes Finder/`open` launches, so a
+    /// directly-exec'd dev binary needs its own guard: an advisory flock on
+    /// a well-known path, held for the process lifetime.
+    private static func exitIfAlreadyRunning() {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("tingle", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("tingle.lock").path
+        lockFD = open(path, O_CREAT | O_RDWR, 0o644)
+        guard lockFD >= 0 else { return }  // can't lock -> don't block launch
+        if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+            Logger(subsystem: Log.subsystem, category: "app")
+                .error("another tingle instance holds \(path, privacy: .public); exiting")
+            exit(0)
+        }
+    }
+
     public static func main() {
+        exitIfAlreadyRunning()
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let delegate = AppDelegate()
