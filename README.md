@@ -45,15 +45,16 @@ volume knob under the ting's lid up to around halfway.
 ### Install with Homebrew (recommended)
 
 ```sh
-brew install --cask --no-quarantine tutorintelligence/tap/tingle
+brew install --cask tutorintelligence/tap/tingle
 ```
 
-`--no-quarantine` is needed because tingle isn't code-signed yet (Apple
-Developer enrollment in progress): without it, Gatekeeper blocks the app
-with "Apple could not verify tingle is free of malware". If you'd rather
-keep the quarantine flag, install normally and approve the app under
-System Settings → Privacy & Security → "Open Anyway". Once signing lands,
-the flag goes away and updates keep permissions intact.
+tingle isn't code-signed yet (Apple Developer enrollment in progress), so
+the cask clears macOS's quarantine flag after install — otherwise
+Gatekeeper would block the app with "Apple could not verify tingle is
+free of malware". If you'd rather keep the flag, install the app from
+source instead and approve it under System Settings → Privacy & Security
+→ "Open Anyway". Once signing lands this note disappears and updates
+keep permissions intact.
 
 ### Install from source
 
@@ -71,10 +72,10 @@ open /Applications/tingle.app
 
 **Or just paste this to Claude Code / Codex and let it do everything:**
 
-> Install tingle with `brew install --cask --no-quarantine
-> tutorintelligence/tap/tingle` and launch it. Then tell me what the menu
-> bar shows and walk me through flashing my ting and granting the
-> microphone and accessibility permissions.
+> Install tingle with `brew install --cask tutorintelligence/tap/tingle`
+> and launch it. Then tell me what the menu bar shows and walk me through
+> flashing my ting and granting the microphone and accessibility
+> permissions.
 
 ### First run
 
