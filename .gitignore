@@ -6,3 +6,4 @@ dist/
 *.p12
 *.dmg
 *.zip
+__pycache__/
