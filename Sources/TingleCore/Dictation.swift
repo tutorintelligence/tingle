@@ -327,6 +327,12 @@ final class DictationSession {
             let locale = try await resolveLocale()
             let transcriber = SpeechTranscriber(
                 locale: locale,
+                // Empty is optimal here (verified against the SDK):
+                // SpeechTranscriber punctuates automatically and its ONLY
+                // TranscriptionOption is .etiquetteReplacements (profanity
+                // censoring), which we deliberately leave off — don't bleep
+                // engineers dictating code. (.punctuation/.emoji exist only
+                // on the lower-accuracy DictationTranscriber.)
                 transcriptionOptions: [],
                 // fastResults biases the recognizer toward low-latency
                 // hypothesis emission — without it, volatile results arrive
