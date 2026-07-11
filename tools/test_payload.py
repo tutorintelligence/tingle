@@ -83,7 +83,8 @@ class PayloadTests(unittest.TestCase):
     def test_long_idle_only_beacons(self):
         ns, ui, spl, said = boot()
         ticks(ns, 140)  # > one beacon period + queue drain (tones 8 ticks apart)
-        self.assertTrue(any(line.startswith("EVT beacon") for line in said))
+        ns["q"]()
+        self.assertTrue(said[0].startswith("S "), "state header on poll")
         # released-state beacon = chirp (1, 3)
         self.assertEqual(spl.triggers[:2], [1, 3])
 
@@ -99,10 +100,12 @@ class PayloadTests(unittest.TestCase):
         ns, ui, spl, said = boot()
         ui.sw4, ui.raw = 1, 0.9
         ticks(ns, 10)
+        ns["q"]()
         self.assertIn("EVT trigger_down", said)
         self.assertEqual(spl.triggers[:1], [0])   # chirp (0,2) begins
         ui.sw4, ui.raw = 0, 0.0
         ticks(ns, 10)
+        ns["q"]()
         self.assertIn("EVT trigger_up", said)
 
     def test_bounce_storm_emits_no_edges(self):
@@ -121,12 +124,14 @@ class PayloadTests(unittest.TestCase):
         said.clear()
         ui.raw = 0.0      # shaft fully returned, switch still claims held
         ticks(ns, 10)
+        ns["q"]()
         self.assertIn("EVT trigger_up", said, "shaft must override a stuck switch")
 
     def test_white_press_events(self):
         ns, ui, spl, said = boot()
         ns["_tingle_cb"](WHITE_DOWN)
         ns["_tingle_cb"](WHITE_UP)
+        ns["q"]()
         self.assertIn("EVT white_down 0 -1", said)
         self.assertIn("EVT white_up 0 -1", said)
 
@@ -135,11 +140,46 @@ class PayloadTests(unittest.TestCase):
         ns["_tingle_cb"] = lambda m: 1 / 0
         ns["python_callback"](TICK)   # must not raise
 
-    def test_no_serial_prints_without_vbus(self):
+    def test_callback_never_prints(self):
+        """The USB-unplug freeze fix: a CDC write can block the VM forever
+        if the host dies mid-write, so the callback must NEVER print --
+        events queue and only q() (host-invoked) prints."""
         ns, ui, spl, said = boot()
-        ui.vbus = 0
-        ticks(ns, 130)
-        self.assertEqual(said, [], "battery mode must never print to CDC")
+        ui.vbus = 1
+        ticks(ns, 140)                       # beacons
+        ns["_tingle_cb"](WHITE_DOWN)         # events
+        ns["_tingle_cb"](WHITE_UP)
+        ui.sw4, ui.raw = 1, 0.9
+        ticks(ns, 10)                        # trigger edge
+        self.assertEqual(said, [], "callback printed! wedge risk reintroduced")
+
+    def test_q_drains_queue_with_state_header(self):
+        ns, ui, spl, said = boot()
+        ns["_tingle_cb"](WHITE_DOWN)
+        ns["_tingle_cb"](WHITE_UP)
+        ns["q"]()
+        self.assertTrue(said[0].startswith("S 0 0 -1"), f"state header first: {said[:1]}")
+        self.assertIn("EVT white_down 0 -1", said)
+        self.assertIn("EVT white_up 0 -1", said)
+        said.clear()
+        ns["q"]()
+        self.assertEqual(len(said), 1, "queue drained; only the header repeats")
+
+    def test_q_header_reflects_held_state(self):
+        ns, ui, spl, said = boot()
+        ui.sw4, ui.raw = 1, 0.9
+        ticks(ns, 10)
+        said.clear()
+        ns["q"]()
+        self.assertTrue(said[0].startswith("S 1 "), f"held in header: {said[0]}")
+
+    def test_event_queue_bounded(self):
+        ns, ui, spl, said = boot()
+        for _ in range(200):
+            ns["_tingle_cb"](WHITE_DOWN)
+            ns["_tingle_cb"](WHITE_UP)
+        ns["q"]()
+        self.assertLessEqual(len(said), 66, "queue must be bounded")
 
 
 class StuckSwitchFlapTests(unittest.TestCase):
@@ -154,29 +194,21 @@ class StuckSwitchFlapTests(unittest.TestCase):
         said.clear()
         ui.raw = 0.04                      # shaft returns; switch stays stuck
         ticks(ns, 10)
+        ns["q"]()
         self.assertIn("EVT trigger_up", said, "shaft-trust release")
         said.clear()
         for i in range(120):               # ADC noise around the threshold
             ui.raw = 0.10 if i % 7 < 3 else 0.04
             ns["_tingle_cb"](TICK)
+        ns["q"]()
         self.assertNotIn("EVT trigger_down", said, "latched: no phantom presses")
         ui.sw4 = 0                          # switch finally opens
         ticks(ns, 10)
         ui.sw4, ui.raw = 1, 0.9            # genuine new press works again
         ticks(ns, 10)
+        ns["q"]()
         self.assertIn("EVT trigger_down", said, "real press after latch clears")
 
-
-class StatefulSerialBeaconTests(unittest.TestCase):
-    def test_serial_beacon_carries_handle_state(self):
-        ns, ui, spl, said = boot()
-        ticks(ns, 140)
-        self.assertIn("EVT beacon 0", said, "released beacon line")
-        ui.sw4, ui.raw = 1, 0.9
-        ticks(ns, 25)
-        said.clear()
-        ticks(ns, 140)
-        self.assertIn("EVT beacon 1", said, "held beacon line")
 
 
 if __name__ == "__main__":
