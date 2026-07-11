@@ -16,7 +16,8 @@ func runConfigTests() {
         expectEqual(config.mappings["fxChange"], .keystroke(key: "return", modifiers: []), "config: default orange mapping")
         expect(config.mappings["mode1"] == nil, "config: no per-mode white mappings by default")
         if case .shell(let cmd)? = config.mappings["white"] {
-            expect(cmd.contains("open -a"), "config: white catch-all is the summon script")
+            expect(cmd.contains("is running") && cmd.contains("activate"),
+                   "config: white catch-all is the summon script")
         } else {
             expect(false, "config: white catch-all mapped by default")
         }
