@@ -29,7 +29,3 @@ jobs:
             test
             style
           requireScope: false
-          subjectPattern: ^(?![A-Z]).+$
-          subjectPatternError: |
-            The PR title subject must start lowercase, e.g.
-            "feat: add battery percent" not "feat: Add battery percent".
