@@ -15,6 +15,8 @@ jobs:
         run: swift run tingle-tests
       - name: Device payload tests
         run: python3 tools/test_payload.py
+      - name: Version-bump logic tests
+        run: cd tools && python3 test_next_version.py
       - name: Payload copies in sync
         run: cmp device/tingle_main.py Sources/TingleCore/Resources/tingle_main.py
       - name: Bundle assembles
