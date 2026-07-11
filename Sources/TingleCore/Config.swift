@@ -501,6 +501,7 @@ public final class ConfigStore {
         "Tutor",
         "README",
         "semver",
+        "config",
     ]
 
     public static let defaultTOML = """
@@ -596,6 +597,7 @@ public final class ConfigStore {
       "ruff",
       "Tutor",
       "README", "semver",
+      "config",
     ]
 
     # Corrections applied to finalized dictation text (word-boundary,
