@@ -89,25 +89,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if event == .triggerDown || event == .triggerUp {
             let now = Date()
             let down = event == .triggerDown
-            let isReversal = down != reconciler.held
-            if isReversal, now.timeIntervalSince(lastTriggerEdgeAt) < triggerChatterWindow {
-                log.info("trigger chatter dropped (\(event.logDescription, privacy: .public) \(Int(now.timeIntervalSince(self.lastTriggerEdgeAt) * 1000))ms after last edge)")
+            let decision = TriggerRouting.decide(
+                down: down, held: reconciler.held,
+                msSinceLastEdge: now.timeIntervalSince(lastTriggerEdgeAt) * 1000,
+                chatterMs: triggerChatterWindow * 1000
+            )
+            if decision.dropAsChatter {
+                log.info("trigger chatter dropped (\(event.logDescription, privacy: .public))")
                 return
             }
-            guard reconciler.apply(edgeDown: down) else { return }   // duplicate
+            _ = reconciler.apply(edgeDown: down)   // keep belief in sync for beacon healing
             lastTriggerEdgeAt = now
-        }
 
-        // Handle released: let go of any keyHold keys and finalize a live
-        // dictation session first (push-to-talk pairing is implicit), then
-        // run whatever plain action triggerUp itself maps to.
-        if event == .triggerUp {
-            actionRunner.releaseHeldKeys()
-            dictation.stopDictation()
-            statusItemController.setTriggerHeld(false)
-        }
-        if event == .triggerDown {
-            statusItemController.setTriggerHeld(true)
+            // Lifecycle first, UNCONDITIONALLY: a release must always stop
+            // dictation (both idempotent) so a session can never wedge past
+            // the trigger being let go.
+            if decision.releaseHeldKeys { actionRunner.releaseHeldKeys() }
+            if decision.stopDictation { dictation.stopDictation() }
+            if let held = decision.setHeld { statusItemController.setTriggerHeld(held) }
+
+            // Only a genuine transition fires the mapped action / starts a
+            // session (dedup: don't double-fire on a repeated edge).
+            guard decision.fireMappedAction else { return }
+            if decision.startDictationOnPress, configStore.config.action(for: event) == .dictate {
+                dictation.startDictation()
+                return
+            }
         }
 
         guard let action = configStore.config.action(for: event) else {
@@ -115,11 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // dictate is only valid on triggerDown (release pairing is implicit).
+        // dictate only starts on triggerDown (handled above); ignore elsewhere.
         if action == .dictate {
-            if event == .triggerDown {
-                dictation.startDictation()
-            } else {
+            if event != .triggerDown {
                 log.warning("\"dictate\" is only valid on the triggerDown mapping; ignoring on \(event.mappingKey ?? "?", privacy: .public)")
             }
             return
