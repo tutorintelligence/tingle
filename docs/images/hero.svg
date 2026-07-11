@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+  <rect width="880" height="300" rx="16" fill="#f6f6f4"/>
+  <rect x="0.5" y="0.5" width="879" height="299" rx="16" fill="none" stroke="#e2e2dd"/>
+
+  <!-- Step 1: the ting + squeeze -->
+  <g transform="translate(60,70)">
+    <!-- body -->
+    <rect x="20" y="10" width="70" height="150" rx="14" fill="#fff" stroke="#111" stroke-width="2.5"/>
+    <!-- grille -->
+    <circle cx="55" cy="55" r="22" fill="none" stroke="#111" stroke-width="2.5"/>
+    <line x1="35" y1="48" x2="75" y2="48" stroke="#111" stroke-width="2.5"/>
+    <line x1="35" y1="55" x2="75" y2="55" stroke="#111" stroke-width="2.5"/>
+    <line x1="35" y1="62" x2="75" y2="62" stroke="#111" stroke-width="2.5"/>
+    <!-- buttons -->
+    <circle cx="42" cy="110" r="7" fill="#fff" stroke="#111" stroke-width="2"/>
+    <circle cx="68" cy="110" r="7" fill="none" stroke="#111" stroke-width="2"/>
+    <circle cx="55" cy="132" r="7" fill="#111"/>
+    <!-- handle / trigger -->
+    <rect x="-6" y="60" width="26" height="46" rx="8" fill="#ff6a3d" stroke="#111" stroke-width="2.5"/>
+    <text x="55" y="192" text-anchor="middle" font-size="15" fill="#111" font-weight="700">squeeze &amp; talk</text>
+  </g>
+
+  <!-- arrow -->
+  <g stroke="#bdbdb5" stroke-width="2.5" fill="none">
+    <path d="M205 145 h70" marker-end="url(#a)"/>
+  </g>
+
+  <!-- Step 2: your words -->
+  <g transform="translate(300,95)">
+    <rect x="0" y="0" width="230" height="110" rx="12" fill="#fff" stroke="#111" stroke-width="2"/>
+    <path d="M24 110 l16 22 l4 -22 z" fill="#fff" stroke="#111" stroke-width="2"/>
+    <text x="18" y="34" font-size="14.5" fill="#111">"add error handling</text>
+    <text x="18" y="58" font-size="14.5" fill="#111"> to the URDF parser</text>
+    <text x="18" y="82" font-size="14.5" fill="#111"> in the monorepo"</text>
+  </g>
+
+  <!-- arrow -->
+  <g stroke="#bdbdb5" stroke-width="2.5" fill="none">
+    <path d="M560 145 h60" marker-end="url(#a)"/>
+  </g>
+
+  <!-- Step 3: lands in your agent -->
+  <g transform="translate(640,70)">
+    <rect x="0" y="0" width="180" height="160" rx="10" fill="#1e1e1e"/>
+    <circle cx="16" cy="16" r="4" fill="#ff5f56"/>
+    <circle cx="30" cy="16" r="4" fill="#ffbd2e"/>
+    <circle cx="44" cy="16" r="4" fill="#27c93f"/>
+    <text x="16" y="52" font-size="12" fill="#8ad6a0">&gt; claude</text>
+    <text x="16" y="78" font-size="12" fill="#e6e6e6">add error handling</text>
+    <text x="16" y="96" font-size="12" fill="#e6e6e6">to the URDF parser</text>
+    <text x="16" y="114" font-size="12" fill="#e6e6e6">in the monorepo<tspan fill="#ff6a3d">_</tspan></text>
+    <text x="90" y="150" text-anchor="middle" font-size="13" fill="#9a9a9a" font-weight="700">no keyboard</text>
+  </g>
+
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0 0 L9 4.5 L0 9 z" fill="#bdbdb5"/>
+    </marker>
+  </defs>
+</svg>
