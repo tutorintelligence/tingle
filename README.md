@@ -1,14 +1,20 @@
 # tingle
 
-Voice-first agentic coding with a [Teenage Engineering EP-2350 "ting"](https://teenage.engineering/store/ep-2350).
+**Voice-first agentic coding with a [Teenage Engineering EP-2350 "ting"](https://teenage.engineering/store/ep-2350).**
 
-Squeeze the ting's trigger and talk — tingle transcribes live into whatever
-app is focused (Claude Code, Codex, anything). Release to finish, tap orange
-to send, tap green to scrap the take. Button presses reach your Mac over USB
-serial when docked, or over an inaudible ultrasonic chirp protocol when the
-ting runs wireless on batteries into a line-in. A tiny MicroPython event
-engine, installed onto the ting's own disk with one click (no firmware
-modification, fully reversible), makes all of it work.
+<p align="center"><img src="docs/images/hero.svg" alt="Squeeze the ting and talk; your words land in your agent, no keyboard" width="760"></p>
+
+Squeeze the ting's trigger and talk — your words appear live in whatever app
+is focused (Claude Code, Codex, anything). Release to finish, tap orange to
+send, tap green to scrap the take, tap white to summon your agent to the
+front. It's a physical push-to-talk button for coding with agents: pick up
+the mic, say what you want, put it down.
+
+Under the hood, a tiny MicroPython event engine installs onto the ting's own
+disk in one click (no firmware modification, fully reversible). Button
+presses reach your Mac instantly over USB, or — when the ting is untethered
+on batteries — over an inaudible ultrasonic chirp protocol on the audio
+cable. You never think about any of that; you just squeeze and talk.
 
 ## Requirements
 
