@@ -115,12 +115,16 @@ enum Flasher {
         try backupExisting()
 
         let fm = FileManager.default
-        for (index, frequency) in frequencies.enumerated() {
-            progress("Writing tone \(index + 1) of 4…")
+        // v2 signaling: coded chirp symbols from SymbolSet (the config's
+        // toneFrequencies are legacy-ignored — symbol shapes are the
+        // contract between Flasher and SymbolDetector).
+        for index in 0..<4 {
+            progress("Writing symbol \(index + 1) of 4…")
             let url = volumeURL.appendingPathComponent("\(index + 1).wav")
             try? fm.removeItem(at: url)
-            try writeToneWAV(frequency: frequency, to: url)
-            log.info("wrote \(url.lastPathComponent, privacy: .public) at \(frequency)Hz")
+            try writeSymbolWAV(symbol: index, to: url)
+            let sweep = SymbolSet.sweeps[index]
+            log.info("wrote \(url.lastPathComponent, privacy: .public) chirp \(Int(sweep.start))->\(Int(sweep.end))Hz")
         }
 
         progress("Writing event engine (main.py)…")
@@ -159,41 +163,19 @@ enum Flasher {
 
     // MARK: - Tone generation
 
-    /// Write a mono 16-bit WAV containing a sine tone with raised-cosine
-    /// fades (matches tools/make_mode_tones.py). Duration must stay at 120ms:
-    /// the event engine's chirps trigger the second burst ~200ms after the
-    /// first, relying on the tone having finished (see device/tingle_main.py).
-    static func writeToneWAV(
-        frequency: Double,
-        to url: URL,
-        sampleRate: Double = 48_000,
-        duration: Double = 0.08,   // matches the device _T_SECOND=8 chirp spacing
-        // fw 1.0.4's output chain was so hot that 0.85 clipped line-in
-        // captures (hence a long stint at 0.30) — but TE rebalanced levels
-        // across fw 1.0.5-1.0.8 and the same 0.30 landed at -35dBFS on
-        // 1.0.8: fragmented bursts, phantom white/green presses, second-plus
-        // trigger latency (regression, measured 2026-07-11). Near-full-scale
-        // is correct for the 1.0.8 baseline; the decoder's clip tolerance
-        // covers anyone still on old firmware.
-        amplitude: Double = 0.95,
-        fadeDuration: Double = 0.010
-    ) throws {
+    /// Write a mono 16-bit WAV containing one coded chirp symbol from
+    /// SymbolSet — the exact waveform SymbolDetector correlates against.
+    /// Duration stays 80ms: the event engine triggers a chirp's second
+    /// burst ~114ms after the first (fw 1.0.8 ticks), relying on the
+    /// sample having finished.
+    static func writeSymbolWAV(symbol: Int, to url: URL) throws {
         // Assembled by hand as Data (RIFF header + 16-bit PCM) rather than
         // via AVAudioFile: no file handle stays open on the volume, so the
         // eject that follows can't hit fBsyErr from our own writer.
-        let frameCount = Int(duration * sampleRate)
-        let fadeFrames = max(1, Int(fadeDuration * sampleRate))
-        var pcm = Data(capacity: frameCount * 2)
-        for i in 0..<frameCount {
-            var value = amplitude * sin(2.0 * .pi * frequency * Double(i) / sampleRate)
-            if i < fadeFrames {
-                value *= 0.5 * (1.0 - cos(.pi * Double(i) / Double(fadeFrames)))
-            }
-            let framesFromEnd = frameCount - 1 - i
-            if framesFromEnd < fadeFrames {
-                value *= 0.5 * (1.0 - cos(.pi * Double(framesFromEnd) / Double(fadeFrames)))
-            }
-            var sample = Int16((value * 32767.0).rounded()).littleEndian
+        let sampleRate = SymbolSet.sampleRate
+        var pcm = Data(capacity: SymbolSet.frameCount * 2)
+        for value in SymbolSet.pcm(symbol: symbol) {
+            var sample = value.littleEndian
             withUnsafeBytes(of: &sample) { pcm.append(contentsOf: $0) }
         }
 

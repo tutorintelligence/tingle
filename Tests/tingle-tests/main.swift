@@ -25,8 +25,8 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--decode" {
         }
     }
     print("decoding \(path): \(String(format: "%.1f", Double(samples.count) / rate))s, \(channels)ch @ \(Int(rate))Hz")
-    var detector = GoertzelDetector(configuration: .init(
-        sampleRate: rate, targetFrequencies: [17_500, 18_000, 18_500, 19_000]))
+    guard rate == SymbolSet.sampleRate else { print("v2 decoder requires 48kHz WAVs"); exit(1) }
+    var detector = SymbolDetector()
     var index = 0
     let chunk = Int(rate / 10)
     while index < samples.count {
@@ -74,15 +74,13 @@ func expectEqual<T: Equatable>(_ a: T, _ b: T, _ label: String,
 }
 
 runTranscriptTyperTests()
-runGoertzelDetectorTests()
 runConfigTests()
 runTriggerReconcilerTests()
 runTriggerRoutingTests()
 runBatteryEstimateTests()
 runReplacementTests()
 runWhiteFallbackTests()
-runAudioFixtureTests()
-runDetectorSweepTests()
+runSymbolDetectorTests()
 runAudioEngineOpsTests()
 
 print(failures == 0 ? "OK — \(passes) assertions passed"

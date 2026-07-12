@@ -4,7 +4,7 @@ import os
 
 /// Detects the flashed device's tone signaling (single burst = white press,
 /// two-tone chirps = mode/FX/handle) on the audio input via an AVAudioEngine
-/// tap feeding GoertzelDetector. Always pinned to an explicit line-in device
+/// tap feeding SymbolDetector. Always pinned to an explicit line-in device
 /// by CoreAudio UID — never the system default input.
 ///
 /// Threading: the engine lives on AudioEngineOps.queue, exclusively — a
@@ -38,7 +38,7 @@ public final class AudioBackend: TingBackend {
     private var engineFormat: AVAudioFormat?
     private var tapInstalled = false
     private var configChangeObserver: NSObjectProtocol?
-    private var detector: GoertzelDetector?
+    private var detector: SymbolDetector?
     private let detectionQueue = DispatchQueue(label: "tingle.audio.detection")
     /// Set by stop() (any thread), read on AudioEngineOps.queue.
     private let stoppedLock = NSLock()
@@ -125,11 +125,18 @@ public final class AudioBackend: TingBackend {
             return
         }
 
-        // Fresh detector for (possibly new) sample rate; serialized with the
-        // tap's processing blocks so a rebuild never races mid-burst DSP.
-        let detector = GoertzelDetector(
-            configuration: .init(sampleRate: format.sampleRate, targetFrequencies: frequencies)
-        )
+        // v2 decoder is built for exactly 48kHz (its heterodyne carriers
+        // are integer fractions of the sample rate). Devices have always
+        // run 48k here; refuse anything else loudly rather than decode
+        // garbage. (A rate converter is a known TODO.)
+        guard format.sampleRate == SymbolSet.sampleRate else {
+            log.error("input device at \(format.sampleRate)Hz — v2 symbol decoder requires 48000Hz; not decoding")
+            detectionQueue.async { self.detector = nil }
+            return
+        }
+        // Fresh detector, serialized with the tap's processing blocks so a
+        // rebuild never races mid-burst DSP.
+        let detector = SymbolDetector()
         detectionQueue.async { self.detector = detector }
 
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
@@ -148,7 +155,10 @@ public final class AudioBackend: TingBackend {
                 // too low for reliable decode. Surface it instead of letting
                 // the user discover it as phantom presses and lag.
                 if let margin = self.detector!.signalMarginDB {
-                    let weak = margin < 6
+                    // signalMarginDB here is correlation-quality scaled
+                    // ~0..40 (0.45 threshold ~= 18); chronically under 22
+                    // means marginal decodes -> tell the user.
+                    let weak = margin < 22
                     if weak != self.reportedWeakSignal {
                         self.reportedWeakSignal = weak
                         if weak {
