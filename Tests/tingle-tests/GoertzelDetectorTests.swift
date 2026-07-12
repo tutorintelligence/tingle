@@ -67,4 +67,36 @@ func runGoertzelDetectorTests() {
     expectEqual(decode(silence(0.5) + chirp(0, 1) + silence(0.45) + chirp(1, 2) + silence(1)),
                 [.modeChanged(mode: 1), .modeChanged(mode: 2)],
                 "detector: rapid repeated chirps all decode (refractory)")
+
+    // Volume-level robustness (regression for fw 1.0.8's rebalanced output:
+    // -35dBFS beacons fragmented into phantom whites and lost triggers).
+
+    expectEqual(decode(silence(0.5) + chirp(0, 2).map { $0 * 0.02 } + silence(1)),
+                [.triggerDown], "detector: quiet (-34dB) trigger pair still decodes")
+
+    // A mid-burst amplitude dip must not split one burst into fragments.
+    var dipped = burst(tones[1], amplitude: 0.03)
+    let dipStart = Int(0.035 * sampleRate), dipEnd = Int(0.05 * sampleRate)
+    for i in dipStart..<dipEnd { dipped[i] *= 0.4 }
+    expectEqual(decode(silence(0.5) + dipped + silence(1)),
+                [.whitePress(mode: 2)],
+                "detector: quiet burst with mid-dip holds together (hysteresis)")
+
+    // Beacon-cadence rescue: after two beacons establish the heartbeat, a
+    // lone beacon-lead tone arriving on schedule is a degraded beacon
+    // carrying state — NOT a phantom white press (which fires the summon
+    // action). Off-cadence lone tones still decode as white presses.
+    let cadence = silence(0.5) + chirp(1, 3) + silence(1.72) + chirp(1, 3) + silence(1.72)
+    expectEqual(decode(cadence + burst(tones[3]) + silence(1)),
+                [.beacon, .beacon, .beaconHeld],
+                "detector: lone held-lead tone on beacon cadence = held beacon")
+    expectEqual(decode(cadence + burst(tones[1]) + silence(1)),
+                [.beacon, .beacon, .beacon],
+                "detector: lone released-lead tone on beacon cadence = beacon")
+    expectEqual(decode(cadence + silence(0.6) + burst(tones[1]) + silence(1)),
+                [.beacon, .beacon, .whitePress(mode: 2)],
+                "detector: lone tone OFF beacon cadence stays a white press")
+    expectEqual(decode(cadence + burst(tones[0]) + silence(1)),
+                [.beacon, .beacon, .whitePress(mode: 1)],
+                "detector: non-beacon-lead lone tone on cadence stays a white press")
 }

@@ -53,6 +53,9 @@ final class DetectionCoordinator {
     /// synthesize trigger edges lost to audio decode errors.
     var onTriggerHint: ((Bool) -> Void)?
     var onStateChange: ((BackendState) -> Void)?
+    /// True while the audio backend reports chronically thin chirp margins
+    /// (ting volume knob too low); appended to the menu status line.
+    private(set) var weakSignal = false
     /// Battery voltage from the serial backend; nil when serial disconnects.
     var onBattery: ((Double?) -> Void)?
 
@@ -228,6 +231,11 @@ final class DetectionCoordinator {
         let backend = AudioBackend(deviceUID: uid, frequencies: configStore.config.toneFrequencies)
         backend.onEvent = { [weak self] event in self?.handleBackendEvent(event, viaAudio: true) }
         backend.onStateChange = { [weak self] in self?.refreshState() }
+        backend.onWeakSignal = { [weak self] weak in
+            guard let self, self.weakSignal != weak else { return }
+            self.weakSignal = weak
+            self.onStateChange?(self.state)
+        }
         audio = backend
         backend.start()
     }
