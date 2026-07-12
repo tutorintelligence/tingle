@@ -84,12 +84,26 @@ final class PermissionsMonitor {
     /// the user never has to discover a silent failure later. The mic
     /// dialog is Apple's request sheet; the accessibility one carries an
     /// "Open System Settings" button that lands on the exact pane.
+    ///
+    /// SEQUENCED, not simultaneous: firing both at once buries the
+    /// accessibility dialog behind other windows the moment the user
+    /// answers the mic sheet. Ask mic first; prompt accessibility only
+    /// after that dialog resolves (either answer), with an explicit
+    /// activation so it lands in front.
     func promptForMissing() {
         if mic == .undetermined {
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
-                self?.refresh()
+                DispatchQueue.main.async {
+                    self?.refresh()
+                    self?.promptAccessibilityStage()
+                }
             }
+        } else {
+            promptAccessibilityStage()
         }
+    }
+
+    private func promptAccessibilityStage() {
         if !axTrusted {
             // Ad-hoc rebuilds orphan the Accessibility row: Settings shows
             // tingle checked, AXIsProcessTrusted() says no. If we ever held
@@ -99,6 +113,7 @@ final class PermissionsMonitor {
             // manual revoke costs at most one extra prompt per update.
             let d = Prefs.suite
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+            NSApp.activate(ignoringOtherApps: true)
             if Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
                d.bool(forKey: "axEverGranted"),
                d.string(forKey: "axAutoRepairVersion") != version {

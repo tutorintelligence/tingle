@@ -10,9 +10,12 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
     private let panel: NSPanel
     private let body: NSTextField
 
+    /// `showsOK: false` = a progress card: no confirm button while the
+    /// operation runs (an OK on a live progress card invited dismissing
+    /// it mid-flash); the title-bar close remains as the escape hatch.
     @discardableResult
-    static func show(title: String, text: String) -> FloatingAlert {
-        let alert = FloatingAlert(title: title, text: text)
+    static func show(title: String, text: String, showsOK: Bool = true) -> FloatingAlert {
+        let alert = FloatingAlert(title: title, text: text, showsOK: showsOK)
         live.append(alert)
         alert.panel.center()
         alert.panel.makeKeyAndOrderFront(nil)
@@ -32,7 +35,7 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
         body.stringValue = text
     }
 
-    private init(title: String, text: String) {
+    private init(title: String, text: String, showsOK: Bool) {
         let width: CGFloat = 400
         let pad: CGFloat = 20
 
@@ -48,8 +51,9 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
         let button = NSButton(title: "OK", target: nil, action: #selector(dismiss))
         button.bezelStyle = .rounded
         button.keyEquivalent = "\r"
+        button.isHidden = !showsOK
 
-        let height = pad + 22 + 8 + bodyHeight + 12 + 32 + pad / 2
+        let height = pad + 22 + 8 + bodyHeight + (showsOK ? 12 + 32 : 6) + pad / 2
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable],
