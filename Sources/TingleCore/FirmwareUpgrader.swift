@@ -45,7 +45,7 @@ enum FirmwareUpgrader {
             case .unzipFailed:
                 return "Could not extract the firmware from Teenage Engineering's zip."
             case .bootloaderTimeout:
-                return "Never saw the TING BOOT disk. With USB connected: take off the ting's lower lid, HOLD the handle, and while still holding it, DOUBLE-CLICK the small button above the USB port. Then run the upgrade again."
+                return "Never saw the TING BOOT disk. The trick is to KEEP the handle squeezed the whole time: lid off, USB connected, squeeze and hold, and while still holding, double-click the small button above the USB port. Run the upgrade again to retry."
             case .tingdiskTimeout:
                 return "Firmware was written, but TINGDISK didn't come back. Power-cycle the ting and run Flash EP from the menu."
             }
@@ -66,7 +66,7 @@ enum FirmwareUpgrader {
                 report("Downloading firmware \(version)…")
                 let uf2 = try fetchUF2()
 
-                report("HOLD the handle, then double-click the button above the USB port…")
+                report("Waiting for the TING BOOT disk (keep squeezing the handle)…")
                 let bootVolume = try waitForBootloaderVolume(timeout: 180)
 
                 report("Writing firmware…")

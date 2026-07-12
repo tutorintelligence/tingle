@@ -173,31 +173,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refreshIcon()
     }
 
+    /// Progress goes to the floating card; here we only track busy state
+    /// (drives the yellow icon and greys the disk items).
     func setFlashStatus(_ text: String?) {
-        setOperationStatus(text, item: flashItem, idleTitle: "Flash EP…")
+        flashStatus = text
+        refreshIcon()
+        updateTingleiskItems()
     }
 
     private func setFirmwareStatus(_ text: String?) {
-        setOperationStatus(text, item: firmwareItem, idleTitle: "Upgrade ting firmware…")
-    }
-
-    /// Progress lives on the (disabled) menu item that started the
-    /// operation. Plain title changes don't repaint while the menu is
-    /// open; assigning attributedTitle forces the redraw.
-    private func setOperationStatus(_ text: String?, item: NSMenuItem, idleTitle: String) {
-        flashStatus = text
-        let title = text ?? idleTitle
-        item.title = title
-        if text != nil {
-            item.attributedTitle = NSAttributedString(string: title, attributes: [
-                .font: NSFont.menuFont(ofSize: 0),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
-        } else {
-            item.attributedTitle = nil
-        }
-        refreshIcon()
-        updateTingleiskItems()
+        setFlashStatus(text)
     }
 
     var isFlashing: Bool { flashStatus != nil }
@@ -403,17 +388,49 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         runFlasherOperation(.restore, title: "Restore stock")
     }
 
+    /// The bootloader ritual card; closed automatically once the TING
+    /// BOOT disk shows up (or the flow ends).
+    private var firmwareInstructions: FloatingAlert?
+
     @objc private func upgradeFirmware() {
         // Same live-status plumbing as Flash EP, but the operation also
-        // spans the guided bootloader dance and firmware write.
+        // spans the guided bootloader dance and firmware write. A one-line
+        // menu ticker can't teach a four-step ritual, so a floating card
+        // carries the steps until the boot disk appears.
+        firmwareInstructions?.close()
+        firmwareInstructions = FloatingAlert.show(
+            title: "Put the ting in firmware mode",
+            text: """
+            1.  Take off the ting's lower lid. Keep USB connected.
+            2.  Squeeze the handle — and KEEP IT SQUEEZED through every \
+            step until this card disappears.
+            3.  Still squeezing, double-click the small button above the \
+            USB port.
+            4.  A disk named TING BOOT appears and tingle does the rest — \
+            you can let go when this card closes.
+            """)
         setFirmwareStatus("Firmware upgrade: starting…")
         FirmwareUpgrader.upgrade(
             frequencies: configStore.config.toneFrequencies
         ) { [weak self] step in
             self?.setFirmwareStatus(step)
             self?.log.info("Firmware upgrade: \(step, privacy: .public)")
+            if step.hasPrefix("Writing firmware") {
+                // Bootloader found: the ritual is over, swap the card for
+                // live progress.
+                self?.firmwareInstructions?.close()
+                self?.firmwareInstructions = nil
+                self?.flashProgress?.close()
+                self?.flashProgress = FloatingAlert.show(title: "Upgrading firmware", text: step)
+            } else {
+                self?.flashProgress?.update(text: step)
+            }
         } completion: { [weak self] result in
             guard let self else { return }
+            self.firmwareInstructions?.close()
+            self.firmwareInstructions = nil
+            self.flashProgress?.close()
+            self.flashProgress = nil
             self.statusItem.menu?.cancelTracking()
             self.setFirmwareStatus(nil)
             self.updateTingleiskItems()
@@ -431,15 +448,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Disk work runs on a background queue; progress streams into the
-    /// status line (and the log), and the finale is a regular alert.
+    /// Disk work runs on a background queue. The menu auto-closes the
+    /// moment the item is clicked, so progress streams into a floating
+    /// card (plus the log); the menu item just greys out.
+    private var flashProgress: FloatingAlert?
+
     private func runFlasherOperation(_ operation: Flasher.Operation, title: String) {
         setFlashStatus("\(title): starting…")
+        flashProgress?.close()
+        flashProgress = FloatingAlert.show(title: title, text: "Starting…")
         Flasher.run(operation) { [weak self] step in
             self?.setFlashStatus(step)
+            self?.flashProgress?.update(text: step)
             self?.log.info("\(title, privacy: .public): \(step, privacy: .public)")
         } completion: { [weak self] result in
             guard let self else { return }
+            self.flashProgress?.close()
+            self.flashProgress = nil
             self.statusItem.menu?.cancelTracking()
             self.setFlashStatus(nil)
             self.updateTingleiskItems()
