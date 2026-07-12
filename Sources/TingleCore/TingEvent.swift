@@ -24,6 +24,11 @@ public enum TingEvent: Equatable {
     /// Beacon variant emitted while the handle is held — carries live
     /// trigger state so a lost trigger chirp self-heals within ~2s.
     case beaconHeld
+    /// A beacon detected from a single surviving tone (the partner tone
+    /// drowned). Proves the ting is alive but the handle state is
+    /// AMBIGUOUS — a released-beacon's second tone is indistinguishable
+    /// from a held-beacon's first. Presence only; never a trigger hint.
+    case beaconSensed
     /// Legacy: the abandoned triple-squeeze gesture (kept decodable for
     /// old device payloads; unmapped by default).
     case eraseGesture
@@ -41,6 +46,7 @@ public enum TingEvent: Equatable {
         case .triggerUp: return "triggerUp"
         case .beacon: return nil
         case .beaconHeld: return nil
+        case .beaconSensed: return nil
         case .eraseGesture: return "tripleSqueeze"
         }
     }
@@ -55,6 +61,7 @@ public enum TingEvent: Equatable {
         case .triggerUp: return "triggerUp"
         case .beacon: return "beacon"
         case .beaconHeld: return "beacon(held)"
+        case .beaconSensed: return "beacon(state unknown)"
         case .eraseGesture: return "eraseGesture(triple squeeze)"
         }
     }
