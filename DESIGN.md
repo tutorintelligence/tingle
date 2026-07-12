@@ -59,7 +59,12 @@ full period waiting + two more periods to lock), and an acquisition hold
 extends it while provisional beacons are arriving — the scan never rotates
 away one beacon short of a lock. The level a lock settles at is remembered
 across backend and app restarts (seeded into each fresh detector), so a
-wake-from-sleep usually fast re-locks on a single beacon. Serial presence
+wake-from-sleep usually fast re-locks on a single beacon. When a lock goes
+quiet for good (the ting slept), the scan CAMPS on the device it was
+locked to — one continuous capture, no rotation (rotation restarted the
+engine every dwell and blinked the macOS mic indicator all night) — with
+a rare sweep of the other candidates (~5min) in case the ting was
+re-plugged to a different jack while asleep. Serial presence
 always preempts audio. Beacons do not prevent the device's battery
 power-save: an idle ting sleeps after 5 minutes and reads as absent — honest.
 
