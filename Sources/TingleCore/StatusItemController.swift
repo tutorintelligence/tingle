@@ -188,7 +188,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var isFlashing: Bool { flashStatus != nil }
 
     private func refreshStatusLine() {
-        statusLineItem.title = dictationStatus ?? lastBackendState.menuDescription
+        var title = dictationStatus ?? lastBackendState.menuDescription
+        if dictationStatus == nil, coordinator.weakSignal {
+            title += " — weak signal, raise ting volume knob"
+        }
+        statusLineItem.title = title
     }
 
     private func refreshIcon() {

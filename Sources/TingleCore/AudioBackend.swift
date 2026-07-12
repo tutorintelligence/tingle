@@ -8,6 +8,10 @@ import os
 /// by CoreAudio UID — never the system default input.
 final class AudioBackend: TingBackend {
     var onEvent: ((TingEvent) -> Void)?
+    /// Fired (main queue) when the chirp SNR crosses into/out of the
+    /// too-quiet regime; drives the "raise the volume knob" menu hint.
+    var onWeakSignal: ((Bool) -> Void)?
+    private var reportedWeakSignal = false
     /// Fired (main queue) when isRunning/deviceName change.
     var onStateChange: (() -> Void)?
 
@@ -112,6 +116,21 @@ final class AudioBackend: TingBackend {
                 // detecting session is diagnosable from Console.
                 for line in self.detector!.drainDiagnostics() {
                     self.log.debug("\(line, privacy: .public)")
+                }
+                // Chronic thin detection margins = the ting's volume knob is
+                // too low for reliable decode. Surface it instead of letting
+                // the user discover it as phantom presses and lag.
+                if let margin = self.detector!.signalMarginDB {
+                    let weak = margin < 6
+                    if weak != self.reportedWeakSignal {
+                        self.reportedWeakSignal = weak
+                        if weak {
+                            self.log.error("weak chirp signal (avg margin \(String(format: "%.1f", margin), privacy: .public)dB) — ting volume knob likely too low")
+                        } else {
+                            self.log.info("chirp signal healthy again (avg margin \(String(format: "%.1f", margin), privacy: .public)dB)")
+                        }
+                        DispatchQueue.main.async { self.onWeakSignal?(weak) }
+                    }
                 }
                 for event in fired {
                     self.log.info("audio event: \(event.logDescription, privacy: .public)")

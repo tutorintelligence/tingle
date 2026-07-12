@@ -80,6 +80,15 @@ dictation, or the device payload. Add a regression test with every bug fix.
 - The Cubilux HLMS-C4 exposes MIC IN and Line IN input devices; ultrasonic
   chirps bleed across jacks. Device ranking must prefer "line in" names
   and the beacon scanner audits the top-ranked jack before locking.
+- Chirp levels depend on BOTH the tone WAV amplitude and the firmware's
+  output mixer: fw 1.0.5-1.0.8 rebalanced levels (0.30-amplitude tones
+  that nearly clipped 1.0.4 landed at -35dBFS on 1.0.8 — phantom presses,
+  laggy triggers). Tones now generate at 0.95; the decoder is hardened
+  for marginal SNR anyway (hysteresis, beacon-cadence lone-tone rescue,
+  post-beacon weak-lone guard) and the menu warns "weak signal" when
+  detection margins go chronically thin. When recording the line-in with
+  ffmpeg for diagnosis: it captures STEREO — deinterleave before FFT, or
+  tones vanish (cost an hour, 2026-07-11).
 - fw <= 1.0.5 reloads FACTORY samples after battery sleep (TE fixed in
   1.0.6), silencing the chirp protocol while the engine keeps beaconing —
   audible TE samples every 2s = this. The payload self-heals (tick-gap

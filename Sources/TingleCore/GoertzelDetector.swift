@@ -35,9 +35,16 @@ public struct GoertzelDetector {
         var targetFrequencies: [Double]
         var guardOffset: Double = 250
         var thresholdDB: Double = 8
+        /// Hysteresis (Schmitt trigger): once a tone is ON, it keeps hitting
+        /// while its margin stays above this lower bar. Starting a burst is
+        /// strict; sustaining one is lenient — marginal-SNR bursts (quiet
+        /// volume knob, lossy cable) hold together instead of fragmenting.
+        var sustainDB: Double = 4
         /// Consecutive hit/miss windows for a tone to switch on/off (debounce).
         var onWindows: Int = 2
-        var offWindows: Int = 2
+        /// 3 tolerates a single flickering window mid-burst at marginal SNR
+        /// (was 2; costs 20ms of burst-end latency, which chirpWait absorbs).
+        var offWindows: Int = 3
         /// Valid burst duration bounds, in windows. The flashed tones are
         /// 120ms (~6 windows at 20ms/window); shorter activations are clicks,
         /// longer ones are program audio — both rejected.
@@ -87,13 +94,25 @@ public struct GoertzelDetector {
     private var tones: [ToneState]
     /// A completed valid burst awaiting either a chirp's second burst or the
     /// chirp-wait timeout (-> white press).
-    private var pendingBurst: (tone: Int, endWindow: Int)?
+    private var pendingBurst: (tone: Int, endWindow: Int, marginDB: Double)?
+    /// Beacon cadence tracking: beacons are periodic (~1.75-2s), so a lone
+    /// beacon-slot tone arriving on schedule is a beacon that lost its
+    /// second tone — never a white press (phantom whites fired the summon
+    /// action at low volume, 2026-07-11).
+    private var lastBeaconWindow: Int?
+    private var beaconIntervalWindows: Double?
+    /// EMA of burst detection margins (dB over the strictest criterion);
+    /// chronically low = the user should raise the ting's volume knob.
+    private(set) var signalMarginDB: Double?
 
     private struct ToneState {
         var hitStreak = 0
         var missStreak = 0
         var isOn = false
         var onStartWindow = 0
+        /// Sum/count of detection margins over the burst's hit windows.
+        var marginSum = 0.0
+        var marginCount = 0
         /// Set when this tone's current activation is a beacon's second
         /// burst: its end must be ignored rather than becoming pending.
         var suppressNextBurstEnd = false
@@ -156,6 +175,26 @@ public struct GoertzelDetector {
         // a stale pending can't pair with an unrelated late onset.
         if let pending = pendingBurst, now - pending.endWindow > chirpWaitWindows {
             pendingBurst = nil
+            // Beacon-cadence rescue: beacon chirps lead with tone 1
+            // (released) or tone 3 (held). A lone one of those arriving
+            // when a beacon is DUE is a beacon whose second tone drowned —
+            // deliver the state it carries instead of a phantom white.
+            if pending.tone == 1 || pending.tone == 3, beaconIsDue(at: pending.endWindow) {
+                noteBeacon(at: pending.endWindow)
+                let event: TingEvent = pending.tone == 1 ? .beacon : .beaconHeld
+                diagnostics.append("lone burst tone=\(pending.tone + 1) on beacon cadence -> \(event.logDescription)")
+                return [event]
+            }
+            // Lone bursts landing right behind a beacon are the marginal-SNR
+            // phantom class (noise splatter off the beacon tones, observed
+            // as self-firing white presses at -35dBFS): demand a healthy
+            // margin there. Real presses at sane volume clear this easily.
+            if let last = lastBeaconWindow,
+               Double(pending.endWindow - last) * Double(configuration.windowSize) / configuration.sampleRate < 0.6,
+               pending.marginDB < configuration.thresholdDB + 4 {
+                diagnostics.append("lone burst tone=\(pending.tone + 1) weak (\(String(format: "%.1f", pending.marginDB))dB) right after beacon — dropped")
+                return []
+            }
             diagnostics.append("lone burst tone=\(pending.tone + 1) -> whitePress")
             enterRefractory(now: now)
             return [.whitePress(mode: pending.tone + 1)]
@@ -177,15 +216,26 @@ public struct GoertzelDetector {
         do {
             let probeLevels = inBandProbeFrequencies.map { powerDB(window, frequency: $0) }
             let medianLevel = Self.median(probeLevels)
-            let threshold = configuration.thresholdDB
-            let medianMargin = clipped ? configuration.clippedMedianMarginDB : threshold
+            let medianMargin = clipped ? configuration.clippedMedianMarginDB : configuration.thresholdDB
             for (index, frequency) in configuration.targetFrequencies.enumerated() {
                 let target = powerDB(window, frequency: frequency)
                 let guardLow = powerDB(window, frequency: frequency - configuration.guardOffset)
                 let guardHigh = powerDB(window, frequency: frequency + configuration.guardOffset)
-                hits[index] = target >= guardLow + threshold
-                    && target >= guardHigh + threshold
-                    && target >= medianLevel + medianMargin
+                // Margin over the strictest of the three criteria.
+                let margin = min(
+                    target - guardLow,
+                    target - guardHigh,
+                    target - (medianLevel + medianMargin - configuration.thresholdDB))
+                // Schmitt trigger: strict to start, lenient to sustain.
+                let bar = tones[index].isOn ? configuration.sustainDB : configuration.thresholdDB
+                hits[index] = margin >= bar
+                if hits[index] {
+                    // Track detection health (EMA): chronically thin margins
+                    // mean the volume knob is too low for reliable decode.
+                    signalMarginDB = 0.9 * (signalMarginDB ?? margin) + 0.1 * margin
+                    tones[index].marginSum += margin
+                    tones[index].marginCount += 1
+                }
             }
         }
 
@@ -237,11 +287,13 @@ public struct GoertzelDetector {
                     // The tail of this second burst is suppressed instead.
                     event = .beacon
                     state.suppressNextBurstEnd = true
+                    noteBeacon(at: now)
                 case (3, 1):
                     // Fixed pair: beacon while the handle is HELD (state-
                     // carrying heartbeat; like .beacon, never refractory).
                     event = .beaconHeld
                     state.suppressNextBurstEnd = true
+                    noteBeacon(at: now)
                 default:
                     let delta = (index - pending.tone + 4) % 4
                     switch delta {
@@ -277,9 +329,12 @@ public struct GoertzelDetector {
             } else if pendingBurst != nil {
                 diagnostics.append("burst tone=\(index + 1) \(duration)w dropped (pending burst already waiting)")
             } else {
+                let avgMargin = state.marginCount > 0 ? state.marginSum / Double(state.marginCount) : 0
                 diagnostics.append("burst tone=\(index + 1) \(duration)w -> pending")
-                pendingBurst = (tone: index, endWindow: endWindow)
+                pendingBurst = (tone: index, endWindow: endWindow, marginDB: avgMargin)
             }
+            state.marginSum = 0
+            state.marginCount = 0
             // TODO: overlapping bursts (heavy FX tails stretching the first
             // tone past the second's onset) end up here with pendingBurst
             // already set and are dropped; revisit after on-hardware tuning.
@@ -287,6 +342,33 @@ public struct GoertzelDetector {
 
         tones[index] = state
         return events
+    }
+
+    /// Beacon bookkeeping for the cadence rescue.
+    private mutating func noteBeacon(at window: Int) {
+        if let last = lastBeaconWindow {
+            let interval = Double(window - last)
+            let windowDuration = Double(configuration.windowSize) / configuration.sampleRate
+            // Only learn plausible heartbeat intervals (1.2-3s).
+            if interval * windowDuration > 1.2, interval * windowDuration < 3.0 {
+                beaconIntervalWindows = beaconIntervalWindows.map { 0.7 * $0 + 0.3 * interval } ?? interval
+            }
+        }
+        lastBeaconWindow = window
+    }
+
+    private func beaconIsDue(at window: Int) -> Bool {
+        guard let last = lastBeaconWindow else { return false }
+        let windowDuration = Double(configuration.windowSize) / configuration.sampleRate
+        let expected = beaconIntervalWindows ?? (2.0 / windowDuration)
+        let elapsed = Double(window - last)
+        // Due = within +/-20% of the expected next heartbeat (or a missed
+        // one: check modulo up to 2 periods for a single dropped beacon).
+        for k in 1...2 {
+            let target = expected * Double(k)
+            if abs(elapsed - target) <= 0.20 * expected { return true }
+        }
+        return false
     }
 
     private mutating func enterRefractory(now: Int) {
