@@ -12,9 +12,10 @@ the mic, say what you want, put it down.
 
 Under the hood, a tiny MicroPython event engine installs onto the ting's own
 disk in one click (no firmware modification, fully reversible). Button
-presses reach your Mac instantly over USB, or — when the ting is untethered
-on batteries — over an inaudible ultrasonic chirp protocol on the audio
-cable. You never think about any of that; you just squeeze and talk.
+presses reach your Mac instantly over USB, or — with no USB attached, the
+ting on batteries — over an inaudible ultrasonic chirp protocol on the
+3.5mm audio cable. You never think about any of that; you just squeeze
+and talk.
 
 ## Requirements
 
@@ -151,8 +152,8 @@ output is rejected and your original text stays).
 
 The ting executes user Python from its USB disk at boot. tingle ships an
 event engine that chains the stock firmware behavior, then reports button
-and trigger events as serial lines (docked) and as ultrasonic codewords
-(wireless): every event is four 25ms chirp symbols carrying an
+and trigger events as serial lines (over USB) and as ultrasonic codewords
+(over the 3.5mm audio cable): every event is four 25ms chirp symbols carrying an
 error-correcting code, matched-filter decoded on the Mac — a corrupted
 symbol self-corrects, and noise can never turn one button into another.
 A state-carrying heartbeat every 2 seconds acts as a pilot signal: it
