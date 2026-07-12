@@ -9,12 +9,20 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
     private static var live: [FloatingAlert] = []
     private let panel: NSPanel
 
-    static func show(title: String, text: String) {
+    @discardableResult
+    static func show(title: String, text: String) -> FloatingAlert {
         let alert = FloatingAlert(title: title, text: text)
         live.append(alert)
         alert.panel.center()
         alert.panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        return alert
+    }
+
+    /// Programmatic dismissal — used when the flow the panel is guiding
+    /// advances on its own (e.g. the bootloader disk appeared).
+    func close() {
+        panel.close()
     }
 
     private init(title: String, text: String) {
