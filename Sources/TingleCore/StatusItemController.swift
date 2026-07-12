@@ -124,9 +124,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // Version + updates are always visible (discoverability); the
         // check is only actionable in the installed .app — Sparkle cannot
         // update a bare dev binary.
+        // Identity line: release builds show the version; dev binaries
+        // show branch @ sha (git, resolved from the executable's repo) so
+        // it's always obvious WHICH tingle is running (multiple sessions
+        // building from different worktrees made this genuinely unclear).
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let versionItem = NSMenuItem(
-            title: "tingle \(version ?? "dev build")", action: nil, keyEquivalent: "")
+        let identity: String
+        if let version {
+            identity = "tingle \(version)"
+        } else {
+            let repo = URL(fileURLWithPath: CommandLine.arguments[0])
+                .resolvingSymlinksInPath()
+                .deletingLastPathComponent()   // debug/
+                .deletingLastPathComponent()   // .build/
+                .deletingLastPathComponent()   // repo root
+            func git(_ args: [String]) -> String? {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                p.arguments = ["-C", repo.path] + args
+                let pipe = Pipe()
+                p.standardOutput = pipe
+                p.standardError = Pipe()
+                try? p.run()
+                p.waitUntilExit()
+                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return (out?.isEmpty ?? true) ? nil : out
+            }
+            let branch = git(["branch", "--show-current"]) ?? "?"
+            let sha = git(["rev-parse", "--short", "HEAD"]) ?? "?"
+            identity = "tingle dev — \(branch) @ \(sha)"
+        }
+        let versionItem = NSMenuItem(title: identity, action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
 

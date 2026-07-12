@@ -1,4 +1,4 @@
-# tingle event engine — copied to the TINGDISK as main.py by FLASH EP.
+# tingle event engine -- copied to the TINGDISK as main.py by FLASH EP.
 # The ting executes /fat/main.py at boot (verified fw 1.0.4). Delete this
 # file from the disk to restore 100% stock behavior.
 #
@@ -22,7 +22,7 @@
 #     mode/fx encodings, so decoding stays collision-free.
 #
 # The beacon lets tingle auto-discover which audio input device the ting
-# is on and show live presence — zero configuration. Open question for
+# is on and show live presence -- zero configuration. Open question for
 # battery use: whether periodic sample triggers delay the ting's
 # power-save (5min) / auto-off (20min) timers; if the unit sleeps, the
 # beacon stops and tingle truthfully reports the ting as absent.
@@ -30,7 +30,7 @@
 # Timing facts (fw 1.0.4, measured): type-3 ticks arrive at ~61 Hz
 # (16.4ms). spl.trigger(-1, slot, False) does NOT stop a oneshot sample,
 # so sequencing relies on gaps, not stops. NEVER call fx.load_preset /
-# fx.preset* from here or over the REPL while a voice is playing — it
+# fx.preset* from here or over the REPL while a voice is playing -- it
 # wedges the audio engine.
 
 exec(open('/rom/main.py').read())
@@ -51,13 +51,17 @@ except (ImportError, AttributeError):
     _tdf = None
 
 _t = {'sam': sam_pos, 'fx': fx_pos, 'hdl': ui.sw(4), 'cand': ui.sw(4),
-      'cnt': 0, 'stk': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0,
+      'cnt': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0,
       'evq': [], 'heal': [], 'rot': 0, 'hb': 0,
-      'lastms': _tms() if _tms else 0}
+      'lastms': _tms() if _tms else 0,
+      # handle-rate tracking for the mash fast-path (hv = last value,
+      # rr = consecutive fast-rise ticks)
+      'hv': 0.0, 'rr': 0, 'fr': 0}
 
-# Ticks between queued tone triggers (~130ms @ 61Hz), leaving a ~50ms gap
-# after each 80ms sample — tightened for wireless event latency.
-_T_SECOND = 8
+# Ticks between queued symbol triggers: 2 ticks ~= 29ms at fw 1.0.8's
+# ~70Hz -- 25ms symbols with ~4ms gaps (measured clean at 30ms spacing,
+# 2026-07-12). One codeword = 4 symbols ~= 110ms on the wire.
+_T_SECOND = 2
 # Trigger from the switch (ui.sw(4)) with edge debounce: the switch
 # bounces mechanically (rapid down/up over a tick or two), and raw
 # per-tick sampling turns that bounce into an event storm that wedges the
@@ -71,7 +75,7 @@ _T_HDL_DEBOUNCE = 3   # ~50ms; longer than bounce, shorter than any real press
 _T_BEACON = 122
 # Slot self-heal: fw <= 1.0.5 reloads FACTORY samples after battery sleep
 # (TE changelog 1.0.6: "factory samples are no longer loaded after sleep";
-# observed 2026-07-11 on fw 1.0.4 — audible TE samples on every beacon,
+# observed 2026-07-11 on fw 1.0.4 -- audible TE samples on every beacon,
 # ultrasound gone, Mac stuck searching). The engine itself survives sleep,
 # so it re-arms the slots: a big gap between ticks means we slept or
 # stalled -> reload all four tone WAVs (beacon slots 1,3 first, and the
@@ -84,9 +88,9 @@ _WAKE_GAP = 500   # ms without a tick that implies sleep/stall
 def _say(*args):
     # NEVER print from the callback: a CDC write can block the whole VM
     # forever if the host vanishes mid-write (USB-C data pins disconnect
-    # before power pins, so a vbus guard races — observed as a full device
+    # before power pins, so a vbus guard races -- observed as a full device
     # freeze at unplug, 2026-07-11). Events queue here and are printed
-    # only inside q(), which the host calls over the REPL — output then
+    # only inside q(), which the host calls over the REPL -- output then
     # happens microseconds after proven-live host bytes.
     _t['evq'].append(' '.join(str(a) for a in args))
     if len(_t['evq']) > 64:
@@ -103,16 +107,26 @@ def q():
     _t['evq'] = []
 
 
-def _chirp(first_slot, second_slot):
-    # Queue both tones; the tick handler plays queued tones _T_SECOND
-    # apart. Queuing (vs. clobbering a single pending slot) means a button
-    # event landing mid-beacon corrupts neither signal.
-    _t['q'] += [first_slot, second_slot]
+# RS[4,2] codebook over GF(4) -- min Hamming distance 3 (single-symbol
+# error correction on the Mac). MUST match SymbolSet.codebook.
+# Message indices: 0 beaconReleased, 1 beaconHeld, 2 triggerDown,
+# 3 triggerUp, 4-7 white mode1-4, 8-11 modeChanged 1-4, 12 fxChanged.
+_CODE = ((0,0,0,0),(0,1,1,2),(0,2,2,3),(0,3,3,1),
+         (1,0,1,1),(1,1,0,3),(1,2,3,2),(1,3,2,0),
+         (2,0,2,2),(2,1,3,0),(2,2,0,1),(2,3,1,3),
+         (3,0,3,3),(3,1,2,1),(3,2,1,0),(3,3,0,2))
+
+
+def _word(msg):
+    # Queue one codeword (4 symbols); the tick handler plays them
+    # _T_SECOND apart. Queuing keeps words serialized -- a button event
+    # landing mid-beacon corrupts neither.
+    _t['q'] += list(_CODE[msg])
 
 
 def _reload(s):
     # Re-arm one sample slot from the FAT tone WAV. Signature per the
-    # stock /rom/main.py: load_wav(slot, open binary file, playmode) —
+    # stock /rom/main.py: load_wav(slot, open binary file, playmode) --
     # passing a path string instead of a file object wedges the VM.
     try:
         g = open('/fat/%d.wav' % (s + 1), 'rb')
@@ -123,14 +137,23 @@ def _reload(s):
 
 
 def _tingle_cb(m):
-    _stock_cb(m)
     t = m >> 16
     v = m & 0xFFFF
+    # White is NOT chained to stock: its only stock action is playing the
+    # slot sample immediately (outside our chirp queue), which used to be
+    # the white signal itself -- a lone symbol that could interleave with
+    # an in-flight beacon pair and misdecode as green/orange. Instead we
+    # queue a same-symbol PAIR (serialized like every other event); the
+    # "sample feedback" is ultrasonic anyway, so nothing audible is lost.
     if t == 1 and v == 0:
         _say('EVT white_down', sam_pos, fx_pos)
-    elif t == 2 and v == 0:
+        _word(4 + sam_pos)
+        return
+    if t == 2 and v == 0:
         _say('EVT white_up', sam_pos, fx_pos)
-    elif t == 3:
+        return
+    _stock_cb(m)
+    if t == 3:
         if _tms:
             _now = _tms()
             if _tdf(_now, _t['lastms']) > _WAKE_GAP:
@@ -147,26 +170,37 @@ def _tingle_cb(m):
         if sam_pos != _t['sam']:
             _t['sam'] = sam_pos
             _say('EVT mode', sam_pos)
-            _chirp(sam_pos, (sam_pos + 1) % 4)
+            _word(8 + sam_pos)
         if fx_pos != _t['fx']:
             _t['fx'] = fx_pos
             _say('EVT fx', fx_pos)
-            _chirp(sam_pos, (sam_pos + 3) % 4)
-        h = ui.sw(4)
-        if not h:
-            _t['stk'] = 0   # switch opened: stuck-latch clears
-        elif _t['stk']:
-            h = 0           # latched: a stuck switch cannot re-press
-        elif _t['hdl'] and ui.handle_raw() < 0.05:
-            # Switch claims held but the shaft is fully returned: the
-            # switch's release threshold sticks (~40-60% travel) or the
-            # element hangs electrically. Trust the shaft — and LATCH:
-            # without the latch, ADC noise around the threshold flaps
-            # held/released at ~1Hz until the shaft settles (observed
-            # 2026-07-11 16:36 as a green/red strobing icon).
-            h = 0
-            _t['stk'] = 1
-        # Debounce: only accept a state that holds steady for N ticks.
+            _word(12)
+        # Trigger law (measured 2026-07-12): TE's handle() is rate-limited
+        # ~0.35/s, so a fast mash finishes physically ~300ms before the
+        # signal reaches any deep threshold. Two regimes, cleanly split by
+        # RATE:
+        #   slow squeeze -> handle tracks the finger; fire at the bottom
+        #     (>=0.90), which feels instant because the signal is already
+        #     there;
+        #   mash -> switch closed while handle still low but climbing
+        #     >=0.04/tick for 3 ticks -- a signature that only exists
+        #     mid-mash; fires ~45ms after the physical click.
+        # Release at <=0.60 either way. All TE signals: switch = when,
+        # handle = where, rate = intent.
+        hn = ui.handle()
+        d = hn - _t['hv']
+        _t['rr'] = _t['rr'] + 1 if d >= 0.04 else 0
+        # Falling run: release needs the signal to be genuinely DESCENDING,
+        # not just low -- a mash's mid-climb stall (one slow tick below
+        # 0.60) must not read as a release (observed as instant
+        # trigger/untrigger/retrigger, 2026-07-12 00:46).
+        _t['fr'] = _t['fr'] + 1 if d <= -0.03 else 0
+        _t['hv'] = hn
+        mash = _t['rr'] >= 3 and ui.sw(4)
+        # Released = below 0.60 while genuinely descending, or fully
+        # returned (floor escape so a step-to-zero can't deadlock).
+        released = (hn <= 0.60 and _t['fr'] >= 2) or hn <= 0.05
+        h = 1 if (hn >= 0.90 or mash) else (0 if released else _t['hdl'])
         if h != _t['cand']:
             _t['cand'] = h
             _t['cnt'] = 0
@@ -176,10 +210,10 @@ def _tingle_cb(m):
             _t['hdl'] = h
             if h:
                 _say('EVT trigger_down')
-                _chirp(0, 2)
+                _word(2)
             else:
                 _say('EVT trigger_up')
-                _chirp(2, 0)
+                _word(3)
         _t['clk'] += 1
         # Beacon heartbeat: fire only when the queue is idle so event
         # chirps always take precedence and sequences never interleave.
@@ -189,9 +223,9 @@ def _tingle_cb(m):
             # Audio-only heartbeat; over serial the q() poll's state header
             # carries liveness + handle state instead.
             if _t['hdl']:
-                _chirp(3, 1)
+                _word(1)
             else:
-                _chirp(1, 3)
+                _word(0)
         # Play queued tones, evenly spaced.
         if _t['q']:
             if _t['gap'] > 0:

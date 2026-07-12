@@ -145,11 +145,14 @@ works on macOS 13+.
 
 The ting executes user Python from its USB disk at boot. tingle ships an
 event engine that chains the stock firmware behavior, then reports button
-and trigger events as serial lines (docked) and as two-tone ultrasonic
-chirps at 17.5–19 kHz (wireless) — decoded on the Mac by a Goertzel filter
-bank. A state-carrying heartbeat every 2 seconds powers zero-config device
-discovery and self-healing state sync. Details, protocol table, and the
-measured hardware reference: [DESIGN.md](DESIGN.md).
+and trigger events as serial lines (docked) and as ultrasonic codewords
+(wireless): every event is four 25ms chirp symbols carrying an
+error-correcting code, matched-filter decoded on the Mac — a corrupted
+symbol self-corrects, and noise can never turn one button into another.
+A state-carrying heartbeat every 2 seconds acts as a pilot signal: it
+powers zero-config device discovery, self-healing state sync, and a
+decoder lock that keeps a sleeping or absent ting perfectly silent.
+Details and the measured hardware reference: [DESIGN.md](DESIGN.md).
 
 ## Development
 

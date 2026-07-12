@@ -84,15 +84,22 @@ dictation, or the device payload. Add a regression test with every bug fix.
 - The Cubilux HLMS-C4 exposes MIC IN and Line IN input devices; ultrasonic
   chirps bleed across jacks. Device ranking must prefer "line in" names
   and the beacon scanner audits the top-ranked jack before locking.
-- Chirp levels depend on BOTH the tone WAV amplitude and the firmware's
+- SIGNALING (DESIGN.md "Signaling protocol"): the slots hold 25ms coded
+  chirp symbols from SymbolSet.swift; every event is a 4-symbol
+  Reed-Solomon codeword (distance 3, single-error correction),
+  matched-filter decoded by SymbolDetector.swift. SymbolSet is the
+  air-gap contract: change it and the device must be re-flashed. The
+  decoder requires exactly 48kHz input. Pilot lock: NO events until 3
+  periodic level-consistent beacons; sleep unlocks; single-beacon fast
+  re-lock. The payload must stay pure ASCII (serial-write deploys drop
+  non-ASCII; also the em-dash rule).
+- Chirp levels depend on BOTH the WAV amplitude and the firmware's
   output mixer: fw 1.0.5-1.0.8 rebalanced levels (0.30-amplitude tones
-  that nearly clipped 1.0.4 landed at -35dBFS on 1.0.8 — phantom presses,
-  laggy triggers). Tones now generate at 0.95; the decoder is hardened
-  for marginal SNR anyway (hysteresis, beacon-cadence lone-tone rescue,
-  post-beacon weak-lone guard) and the menu warns "weak signal" when
-  detection margins go chronically thin. When recording the line-in with
-  ffmpeg for diagnosis: it captures STEREO — deinterleave before FFT, or
-  tones vanish (cost an hour, 2026-07-11).
+  that nearly clipped 1.0.4 landed at -35dBFS on 1.0.8 — phantom
+  presses, laggy triggers). Symbols generate at 0.95. When recording
+  the line-in with ffmpeg for diagnosis: it captures STEREO —
+  deinterleave before FFT, or the signal vanishes (cost an hour,
+  2026-07-11).
 - fw <= 1.0.5 reloads FACTORY samples after battery sleep (TE fixed in
   1.0.6), silencing the chirp protocol while the engine keeps beaconing —
   audible TE samples every 2s = this. The payload self-heals (tick-gap
