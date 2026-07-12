@@ -9,9 +9,10 @@ import os
 /// Flow (driven from the menu, status streamed to the UI):
 ///   1. Download TE's official firmware zip (pinned URL + SHA-256), unzip
 ///      the .uf2.
-///   2. Ask the user to re-plug the ting while holding the button above
-///      the USB-C port — that boots the RP2350 ROM bootloader, which
-///      mounts as a small volume containing INFO_UF2.TXT.
+///   2. Walk the user through TE's ritual (from the firmware readme):
+///      lid off, USB attached, HOLD the handle, and while holding,
+///      double-click the small button above the USB port — a "TING BOOT"
+///      volume appears containing INFO_UF2.TXT.
 ///   3. Copy the .uf2 there. The device flashes and reboots mid-copy, so
 ///      the volume vanishing during/after the write is the success signal.
 ///   4. Wait for TINGDISK to come back, then re-run Flash EP so the tingle
@@ -44,7 +45,7 @@ enum FirmwareUpgrader {
             case .unzipFailed:
                 return "Could not extract the firmware from Teenage Engineering's zip."
             case .bootloaderTimeout:
-                return "Never saw the bootloader disk. Unplug the ting, HOLD the button above the USB-C port, and plug it back in while holding."
+                return "Never saw the TING BOOT disk. With USB connected: take off the ting's lower lid, HOLD the handle, and while still holding it, DOUBLE-CLICK the small button above the USB port. Then run the upgrade again."
             case .tingdiskTimeout:
                 return "Firmware was written, but TINGDISK didn't come back. Power-cycle the ting and run Flash EP from the menu."
             }
@@ -65,7 +66,7 @@ enum FirmwareUpgrader {
                 report("Downloading firmware \(version)…")
                 let uf2 = try fetchUF2()
 
-                report("Re-plug the ting HOLDING the button above USB-C…")
+                report("HOLD the handle, then double-click the button above the USB port…")
                 let bootVolume = try waitForBootloaderVolume(timeout: 180)
 
                 report("Writing firmware…")
