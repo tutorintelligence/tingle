@@ -56,8 +56,13 @@ func runSymbolDetectorTests() {
                 [.modeChanged(mode: 4)], "symbols: mode chirp with wraparound")
     expectEqual(symDecode(symPrime() + pair(2, 1) + gap(1)).filter { !isBeaconish($0) },
                 [.fxChanged(preset: nil)], "symbols: fx chirp")
+    expectEqual(symDecode(symPrime() + pair(1, 1) + gap(1)).filter { !isBeaconish($0) },
+                [.whitePress(mode: 2)], "symbols: same-symbol pair = white press")
     expectEqual(symDecode(symPrime() + sym(1) + gap(1)).filter { !isBeaconish($0) },
-                [.whitePress(mode: 2)], "symbols: lone symbol = white press")
+                [], "symbols: lone symbol is NOT an event (pairs-only protocol)")
+    // White queued behind a beacon (device serialization): both decode.
+    expectEqual(symDecode(symPrime() + pair(1, 3) + gap(0.034) + pair(0, 0) + gap(1)).filter { !isBeaconish($0) },
+                [.whitePress(mode: 1)], "symbols: white pair right behind a beacon decodes")
     expectEqual(symDecode(symPrime() + pair(3, 1) + gap(1)).suffix(1).map { $0 },
                 [.beaconHeld], "symbols: held beacon")
 

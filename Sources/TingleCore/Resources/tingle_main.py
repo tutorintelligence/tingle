@@ -51,7 +51,7 @@ except (ImportError, AttributeError):
     _tdf = None
 
 _t = {'sam': sam_pos, 'fx': fx_pos, 'hdl': ui.sw(4), 'cand': ui.sw(4),
-      'cnt': 0, 'stk': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0,
+      'cnt': 0, 'q': [], 'gap': 0, 'bcn': 0, 'clk': 0,
       'evq': [], 'heal': [], 'rot': 0, 'hb': 0,
       'lastms': _tms() if _tms else 0}
 
@@ -152,20 +152,15 @@ def _tingle_cb(m):
             _t['fx'] = fx_pos
             _say('EVT fx', fx_pos)
             _chirp(sam_pos, (sam_pos + 3) % 4)
+        # SWITCH-ONLY triggering (Josh's call, 2026-07-11): the trigger is
+        # the tactile switch, full stop — squeeze through to it to start,
+        # release when it opens. The analog shaft is NOT consulted:
+        # ui.handle_raw() reads ~0.01 even fully depressed on fw 1.0.8
+        # (measured trips at 0.006/0.012/0.019 during full holds), so the
+        # old shaft-trust heuristic force-released every real hold. If the
+        # switch ever sticks closed after release, the state-carrying
+        # beacon heals the Mac within ~2s.
         h = ui.sw(4)
-        if not h:
-            _t['stk'] = 0   # switch opened: stuck-latch clears
-        elif _t['stk']:
-            h = 0           # latched: a stuck switch cannot re-press
-        elif _t['hdl'] and ui.handle_raw() < 0.05:
-            # Switch claims held but the shaft is fully returned: the
-            # switch's release threshold sticks (~40-60% travel) or the
-            # element hangs electrically. Trust the shaft — and LATCH:
-            # without the latch, ADC noise around the threshold flaps
-            # held/released at ~1Hz until the shaft settles (observed
-            # 2026-07-11 16:36 as a green/red strobing icon).
-            h = 0
-            _t['stk'] = 1
         # Debounce: only accept a state that holds steady for N ticks.
         if h != _t['cand']:
             _t['cand'] = h

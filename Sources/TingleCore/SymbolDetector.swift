@@ -252,11 +252,10 @@ public struct SymbolDetector {
             case 1: return userEvent(.modeChanged(mode: a + 1), level: pending.levelDB)
             case 3: return userEvent(.fxChanged(preset: nil), level: pending.levelDB)
             default:
-                // Same-symbol double: resolve the first as a white press,
-                // re-pend the second.
-                let events = userEvent(.whitePress(mode: a + 1), level: pending.levelDB)
-                pendingSymbol = (symbol, at, levelDB)
-                return events
+                // Same-symbol pair = white press (the device queues its
+                // mode symbol twice; serialized, so it can never
+                // interleave with a beacon).
+                return userEvent(.whitePress(mode: a + 1), level: pending.levelDB)
             }
         }
     }
@@ -270,10 +269,11 @@ public struct SymbolDetector {
                 noteBeacon(at: pending.at)
                 diagnosticsBuffer.append("lone S\(pending.symbol) on beacon cadence -> beacon(state unknown)")
                 events.append(.beaconSensed)
-            } else if levelCredible(pending.levelDB) {
-                events.append(contentsOf: userEvent(.whitePress(mode: pending.symbol + 1), level: pending.levelDB))
             } else {
-                diagnosticsBuffer.append("lone S\(pending.symbol) level \(String(format: "%.1f", pending.levelDB))dB not credible — dropped")
+                // Lone symbols are NOT events in this protocol (every real
+                // event is a pair; white is a same-symbol pair). A lone is
+                // a degraded pair or noise: log and drop.
+                diagnosticsBuffer.append("lone S\(pending.symbol) — no event (pairs only)")
             }
         }
         if locked, let last = lastBeaconAt, now - last > 3.2 * (beaconInterval ?? 2.0) {

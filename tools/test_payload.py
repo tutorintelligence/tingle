@@ -132,6 +132,24 @@ class PayloadTests(unittest.TestCase):
         ns["q"]()
         self.assertIn("EVT trigger_up", said)
 
+    def test_full_hold_never_releases_early(self):
+        # Regression (2026-07-11): fw 1.0.8 reads handle_raw ~0.01 even
+        # fully depressed; the old shaft-trust heuristic force-released
+        # every real hold (~trips at 0.006-0.019). Switch-only now: a
+        # closed switch with a zero shaft must stay HELD indefinitely.
+        ns, ui, spl, said = boot()
+        ui.sw4, ui.raw = 1, 0.0    # full squeeze, dead shaft ADC
+        ticks(ns, 610)             # ~10s hold
+        ns["q"]()
+        downs = sum("trigger_down" in x for x in said)
+        ups = sum("trigger_up" in x for x in said)
+        self.assertEqual(downs, 1, "one press")
+        self.assertEqual(ups, 0, "no phantom release during a 10s hold")
+        ui.sw4 = 0
+        ticks(ns, 10)
+        ns["q"]()
+        self.assertTrue(any("trigger_up" in x for x in said), "release on switch open")
+
     def test_bounce_storm_emits_no_edges(self):
         ns, ui, spl, said = boot()
         # Alternate the switch every tick: never stable for the debounce.
@@ -141,15 +159,16 @@ class PayloadTests(unittest.TestCase):
         self.assertNotIn("EVT trigger_down", said)
         self.assertNotIn("EVT trigger_up", said)
 
-    def test_stuck_switch_released_by_shaft(self):
+    def test_white_press_queues_same_symbol_pair(self):
+        # White is a queued SAME-SYMBOL pair (serialized with beacons);
+        # stock is deliberately not chained for white (its only stock
+        # action was unserialized sample playback = the old collision-
+        # prone lone symbol).
         ns, ui, spl, said = boot()
-        ui.sw4, ui.raw = 1, 0.9
-        ticks(ns, 10)
-        said.clear()
-        ui.raw = 0.0      # shaft fully returned, switch still claims held
-        ticks(ns, 10)
-        ns["q"]()
-        self.assertIn("EVT trigger_up", said, "shaft must override a stuck switch")
+        ns["_tingle_cb"](WHITE_DOWN)
+        self.assertEqual(ns["_t"]["q"], [0, 0], "white queues (sam,sam)")
+        ticks(ns, 20)
+        self.assertEqual(spl.triggers[:2], [0, 0], "pair plays serialized")
 
     def test_white_press_events(self):
         ns, ui, spl, said = boot()
@@ -205,33 +224,6 @@ class PayloadTests(unittest.TestCase):
         ns["q"]()
         self.assertLessEqual(len(said), 66, "queue must be bounded")
 
-
-class StuckSwitchFlapTests(unittest.TestCase):
-    def test_stuck_switch_with_shaft_noise_does_not_flap(self):
-        """Regression (2026-07-11 16:36): sw stuck at 1, shaft resting near
-        the shaft-trust threshold with ADC noise -> icon strobed red/green
-        at ~1Hz. After the shaft-forced release, no new press may be
-        believed until the switch physically opens."""
-        ns, ui, spl, said = boot()
-        ui.sw4, ui.raw = 1, 0.9
-        ticks(ns, 10)                      # real press
-        said.clear()
-        ui.raw = 0.04                      # shaft returns; switch stays stuck
-        ticks(ns, 10)
-        ns["q"]()
-        self.assertIn("EVT trigger_up", said, "shaft-trust release")
-        said.clear()
-        for i in range(120):               # ADC noise around the threshold
-            ui.raw = 0.10 if i % 7 < 3 else 0.04
-            ns["_tingle_cb"](TICK)
-        ns["q"]()
-        self.assertNotIn("EVT trigger_down", said, "latched: no phantom presses")
-        ui.sw4 = 0                          # switch finally opens
-        ticks(ns, 10)
-        ui.sw4, ui.raw = 1, 0.9            # genuine new press works again
-        ticks(ns, 10)
-        ns["q"]()
-        self.assertIn("EVT trigger_down", said, "real press after latch clears")
 
 
 class SlotSelfHealTests(unittest.TestCase):
