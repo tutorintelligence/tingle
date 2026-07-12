@@ -76,8 +76,13 @@ dictation, or the device payload. Add a regression test with every bug fix.
 - fw <= 1.0.5 reloads FACTORY samples after battery sleep (TE fixed in
   1.0.6), silencing the chirp protocol while the engine keeps beaconing —
   audible TE samples every 2s = this. The payload self-heals (tick-gap
-  wake detection + slow rotation reload). Upgrading the ting to fw 1.0.8
-  also fixes it at the source (untested with the payload).
+  wake detection + slow rotation reload). "Upgrade ting firmware…" in the
+  menu flashes TE's pinned-latest UF2 (FirmwareUpgrader.swift: download →
+  guided BOOTSEL re-plug → copy .uf2 → re-flash payload); fw 1.0.6+ fixes
+  the sleep clobber at the source. The exact fw version is NOT detectable
+  (bcdDevice only says 1.00), so the flow flashes unconditionally —
+  harmless when already current. Payload-on-1.0.8 still needs one live
+  verification.
 - spl.load_wav takes (slot, OPEN BINARY FILE, playmode) — passing a path
   string wedges the VM (needs the power ritual). Reference for the whole
   device API: the stock /rom/main.py inside TE's firmware zip.

@@ -34,6 +34,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let inputDeviceItem = NSMenuItem(title: "Input device", action: nil, keyEquivalent: "")
     private let flashItem = NSMenuItem(title: "Flash EP…", action: #selector(flashEP), keyEquivalent: "")
     private let restoreItem = NSMenuItem(title: "Restore stock", action: #selector(restoreStock), keyEquivalent: "")
+    private let firmwareItem = NSMenuItem(title: "Upgrade ting firmware…", action: #selector(upgradeFirmware), keyEquivalent: "")
     private let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let updater = Updater()
 
@@ -109,6 +110,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         restoreItem.target = self
         menu.addItem(restoreItem)
 
+        firmwareItem.target = self
+        menu.addItem(firmwareItem)
+
         menu.addItem(.separator())
 
         // All configuration is the JSON file (live-reloaded on save);
@@ -170,19 +174,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func setFlashStatus(_ text: String?) {
+        setOperationStatus(text, item: flashItem, idleTitle: "Flash EP…")
+    }
+
+    private func setFirmwareStatus(_ text: String?) {
+        setOperationStatus(text, item: firmwareItem, idleTitle: "Upgrade ting firmware…")
+    }
+
+    /// Progress lives on the (disabled) menu item that started the
+    /// operation. Plain title changes don't repaint while the menu is
+    /// open; assigning attributedTitle forces the redraw.
+    private func setOperationStatus(_ text: String?, item: NSMenuItem, idleTitle: String) {
         flashStatus = text
-        // Progress lives on the (disabled) Flash EP item itself. Plain
-        // title changes don't repaint while the menu is open; assigning
-        // attributedTitle forces the redraw.
-        let title = text ?? "Flash EP…"
-        flashItem.title = title
+        let title = text ?? idleTitle
+        item.title = title
         if text != nil {
-            flashItem.attributedTitle = NSAttributedString(string: title, attributes: [
+            item.attributedTitle = NSAttributedString(string: title, attributes: [
                 .font: NSFont.menuFont(ofSize: 0),
                 .foregroundColor: NSColor.secondaryLabelColor,
             ])
         } else {
-            flashItem.attributedTitle = nil
+            item.attributedTitle = nil
         }
         refreshIcon()
         updateTingleiskItems()
@@ -366,6 +378,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let available = Flasher.isTingleiskMounted && !isFlashing
         flashItem.isEnabled = available
         restoreItem.isEnabled = available
+        // The firmware flow starts with a download and a guided re-plug,
+        // so it doesn't need TINGDISK up front — only mutual exclusion.
+        firmwareItem.isEnabled = !isFlashing
     }
 
     @objc private func flashEP() {
@@ -374,6 +389,37 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func restoreStock() {
         runFlasherOperation(.restore, title: "Restore stock")
+    }
+
+    @objc private func upgradeFirmware() {
+        // Same live-status plumbing as Flash EP, but the operation also
+        // spans the guided bootloader dance and firmware write.
+        setFirmwareStatus("Firmware upgrade: starting…")
+        FirmwareUpgrader.upgrade(
+            frequencies: configStore.config.toneFrequencies
+        ) { [weak self] step in
+            self?.setFirmwareStatus(step)
+            self?.log.info("Firmware upgrade: \(step, privacy: .public)")
+        } completion: { [weak self] result in
+            guard let self else { return }
+            self.statusItem.menu?.cancelTracking()
+            self.setFirmwareStatus(nil)
+            self.updateTingleiskItems()
+            switch result {
+            case .success(let message):
+                let alert = NSAlert()
+                alert.alertStyle = .informational
+                alert.messageText = "Firmware upgrade complete"
+                alert.informativeText = message
+                    + "\n\nNow power-cycle the ting: press the small button above "
+                    + "the USB-C port, then push the handle to start it."
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            case .failure(let error):
+                self.log.error("Firmware upgrade failed: \(String(describing: error))")
+                self.presentError("Firmware upgrade failed", error)
+            }
+        }
     }
 
     /// Disk work runs on a background queue; progress streams into the
