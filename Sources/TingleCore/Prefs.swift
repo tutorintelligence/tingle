@@ -7,4 +7,14 @@ import Foundation
 /// the installed app had already done. One domain, one truth.
 enum Prefs {
     static let suite = UserDefaults(suiteName: "com.tutorintelligence.tingle") ?? .standard
+
+    /// Beacon level (dBFS) of the last pilot lock — seeds the detector's
+    /// single-beacon fast re-lock across backend AND app restarts.
+    static var lastBeaconLevelDB: Double? {
+        get { suite.object(forKey: "lastBeaconLevelDB") as? Double }
+        set {
+            if let newValue { suite.set(newValue, forKey: "lastBeaconLevelDB") }
+            else { suite.removeObject(forKey: "lastBeaconLevelDB") }
+        }
+    }
 }

@@ -95,7 +95,7 @@ final class ActionRunner {
     }
 
     private func postKeyEvent(code: CGKeyCode, flags: CGEventFlags, keyDown: Bool) {
-        let source = CGEventSource(stateID: .hidSystemState)
+        let source = SyntheticEvents.source()
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: keyDown) else {
             log.error("failed to create CGEvent for key code \(code)")
             return

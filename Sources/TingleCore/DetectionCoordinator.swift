@@ -35,7 +35,7 @@ enum BackendState: Equatable {
         case .tingDetected(let deviceName):
             return "ting on \(deviceName)"
         case .tingStale(_, let seconds):
-            return "ting not detected (last heard \(seconds)s ago)"
+            return "ting asleep or off — squeeze the handle to wake (last heard \(seconds)s ago)"
         case .listeningAudio(let deviceName):
             return "Listening on \(deviceName) — no ting heard"
         case .connectedSerial:
@@ -61,8 +61,20 @@ final class DetectionCoordinator {
 
     private(set) var state: BackendState = .idle {
         didSet {
-            if state != oldValue { onStateChange?(state) }
+            if state != oldValue {
+                recordTransition(state.menuDescription)
+                onStateChange?(state)
+            }
         }
+    }
+
+    /// Rolling window of recent state transitions for the diagnostics
+    /// report — the first question in every support thread is "what was
+    /// it doing before it broke".
+    private(set) var recentTransitions: [(at: Date, line: String)] = []
+    func recordTransition(_ line: String) {
+        recentTransitions.append((Date(), line))
+        if recentTransitions.count > 60 { recentTransitions.removeFirst() }
     }
 
     private let configStore: ConfigStore
@@ -70,6 +82,10 @@ final class DetectionCoordinator {
     private var audio: AudioBackend?
     private var pollTimer: Timer?
     private var noCandidateDevice = false
+    /// Last beacon level a lock settled at, carried across backend
+    /// restarts (and app restarts via Prefs) to power single-beacon fast
+    /// re-lock after sleep.
+    private(set) var lastKnownBeaconLevelDB: Double? = Prefs.lastBeaconLevelDB
     /// Beacon auto-discovery state (only driven while in automatic mode,
     /// i.e. config.audioInputDeviceUID == nil). The locked device lives here
     /// in-memory for the session — it is never written to config.
@@ -159,7 +175,18 @@ final class DetectionCoordinator {
         }
         noCandidateDevice = false
 
-        switch scanner.tick(now: Self.now(), candidateCount: candidates.count) {
+        // Detector pilot state: harvest the level memory (persisted for
+        // future fast re-locks) and hold the scan while an acquisition is
+        // actively progressing on the current device.
+        let snapshot = audio?.detectorSnapshot()
+        if let level = snapshot?.levelMemoryDB,
+           lastKnownBeaconLevelDB.map({ abs($0 - level) > 0.5 }) ?? true {
+            lastKnownBeaconLevelDB = level
+            Prefs.lastBeaconLevelDB = level
+        }
+
+        switch scanner.tick(now: Self.now(), candidateCount: candidates.count,
+                            acquiring: snapshot?.acquiring ?? false) {
         case .stay:
             break
         case .switchCandidate(let index):
@@ -229,6 +256,7 @@ final class DetectionCoordinator {
     private func startAudioBackend(uid: String) {
         currentAudioDeviceUID = uid
         let backend = AudioBackend(deviceUID: uid, frequencies: configStore.config.toneFrequencies)
+        backend.seedBeaconLevelDB = lastKnownBeaconLevelDB
         backend.onEvent = { [weak self] event in self?.handleBackendEvent(event, viaAudio: true) }
         backend.onStateChange = { [weak self] in self?.refreshState() }
         backend.onWeakSignal = { [weak self] weak in

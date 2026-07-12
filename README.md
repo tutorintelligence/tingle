@@ -148,6 +148,13 @@ gone, punctuation fixed, your jargon corrected — all locally, nothing
 leaves the Mac, and it never touches your words' meaning (degenerate model
 output is rejected and your original text stays).
 
+**About the orange microphone icon:** macOS shows its privacy indicator
+whenever any app captures audio input — tingle is always listening to the
+line-in for the ting's chirps, so the icon is expected and can't be
+hidden. The "mic mode" options macOS offers there (Voice Isolation etc.)
+only affect video-conferencing-style apps; tingle's raw capture ignores
+them.
+
 ## How it works
 
 The ting executes user Python from its USB disk at boot. tingle ships an
