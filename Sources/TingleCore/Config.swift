@@ -641,6 +641,7 @@ public final class ConfigStore {
     # no matter how much vocabulary biasing it gets.
     [replacements]
     "Tamil" = "TOML"
+    "REgex" = "regex"
     "clawed" = "Claude"
     "Clawed" = "Claude"
 
