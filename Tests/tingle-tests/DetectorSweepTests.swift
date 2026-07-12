@@ -52,9 +52,18 @@ private func sweepDecode(_ samples: [Float]) -> [TingEvent] {
 }
 
 private func triggerChirp(amplitude: Double) -> [Float] {
-    quiet(0.5) + toneBurst(sweepTones[0], amplitude: amplitude)
+    // Self-calibration prelude at the SAME amplitude (a quiet device has
+    // quiet beacons too), then the trigger pair under test.
+    quiet(0.5)
+        + toneBurst(sweepTones[1], amplitude: amplitude) + quiet(0.05) + toneBurst(sweepTones[3], amplitude: amplitude)
+        + quiet(1.72)
+        + toneBurst(sweepTones[1], amplitude: amplitude) + quiet(0.05) + toneBurst(sweepTones[3], amplitude: amplitude)
+        + quiet(0.4)
+        + toneBurst(sweepTones[0], amplitude: amplitude)
         + quiet(0.05) + toneBurst(sweepTones[2], amplitude: amplitude) + quiet(1)
 }
+
+private func isBeaconVariant(_ e: TingEvent) -> Bool { e == .beacon || e == .beaconHeld || e == .beaconSensed }
 
 func runDetectorSweepTests() {
     // --- 1. Sensitivity floor -------------------------------------------
@@ -65,12 +74,13 @@ func runDetectorSweepTests() {
     let noiseAmp = 0.01
     for (i, toneAmp) in [0.5, 0.05, 0.02, 0.008].enumerated() {
         let samples = mix(triggerChirp(amplitude: toneAmp), noiseAmplitude: noiseAmp, seed: UInt64(i + 1))
-        expectEqual(sweepDecode(samples), [.triggerDown],
+        expectEqual(sweepDecode(samples).filter { !isBeaconVariant($0) }, [.triggerDown],
                     "sweep: trigger decodes at tone amp \(toneAmp) in 0.01 noise")
     }
 
     // Clean-line floor (no noise): far quieter still.
-    expectEqual(sweepDecode(triggerChirp(amplitude: 0.002)), [.triggerDown],
+    expectEqual(sweepDecode(triggerChirp(amplitude: 0.002)).filter { !isBeaconVariant($0) },
+                [.triggerDown],
                 "sweep: trigger decodes at -54dBFS on a clean line")
 
     // --- 2. Adversarial corpus: ZERO events allowed ---------------------
