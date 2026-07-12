@@ -85,10 +85,16 @@ public struct GoertzelDetector {
     // Derived, in window units.
     private let chirpWaitWindows: Int
     private let refractoryWindows: Int
-    private let inBandProbeFrequencies: [Double]
 
     // Streaming state.
     private var carry: [Float] = []
+    /// Per-bin noise floors (dB), tracked over time with asymmetric EMA:
+    /// fast to follow the floor down, slow to creep up, and never learning
+    /// from windows where the bin is excited (tones must not raise their
+    /// own floor). This replaces the per-window across-band median as the
+    /// noise reference — the floor adapts to ANY volume level and any
+    /// stationary interference without a tuned constant.
+    private var targetFloors: [Double] = []
     private var windowClock = 0
     private var refractoryUntil = 0
     private var tones: [ToneState]
@@ -101,6 +107,11 @@ public struct GoertzelDetector {
     /// action at low volume, 2026-07-11).
     private var lastBeaconWindow: Int?
     private var beaconIntervalWindows: Double?
+    /// EMA of beacon first-tone detection margins: the device's heartbeat
+    /// continuously calibrates "how loud a real chirp is right now". A
+    /// lone burst claiming to be a white press must be comparably strong —
+    /// noise pops are 10-20dB weaker than the device's actual output.
+    private var beaconMarginEMA: Double?
     /// EMA of burst detection margins (dB over the strictest criterion);
     /// chronically low = the user should raise the ting's volume knob.
     public private(set) var signalMarginDB: Double?
@@ -125,6 +136,11 @@ public struct GoertzelDetector {
         /// Burst started with recent guard activity: program audio gliding
         /// into the bin, not a chirp appearing from silence.
         var taintedByApproach = false
+        /// Running peak (dB) of the current burst: the sustain hysteresis
+        /// is bounded to peak-12dB so noise flicker near the floor cannot
+        /// stretch a burst past its true end (a real tone's plateau is
+        /// flat; its end is a >20dB cliff).
+        var peakDB = -200.0
     }
 
     public init(configuration: Configuration) {
@@ -135,10 +151,6 @@ public struct GoertzelDetector {
         self.chirpWaitWindows = max(1, Int((configuration.chirpWait / windowDuration).rounded()))
         self.refractoryWindows = max(1, Int((configuration.refractoryDuration / windowDuration).rounded()))
 
-        // Probe grid spanning the tone band, for the median in-band level.
-        let low = (configuration.targetFrequencies.min() ?? 17500) - 1000
-        let high = (configuration.targetFrequencies.max() ?? 19000) + 500
-        self.inBandProbeFrequencies = Array(stride(from: low, through: high, by: 250))
     }
 
     /// Human-readable burst/decision notes accumulated since the last drain
@@ -190,9 +202,12 @@ public struct GoertzelDetector {
             // deliver the state it carries instead of a phantom white.
             if pending.tone == 1 || pending.tone == 3, beaconIsDue(at: pending.endWindow) {
                 noteBeacon(at: pending.endWindow)
-                let event: TingEvent = pending.tone == 1 ? .beacon : .beaconHeld
-                diagnostics.append("lone burst tone=\(pending.tone + 1) on beacon cadence -> \(event.logDescription)")
-                return [event]
+                // State is ambiguous from one tone: a released-beacon's
+                // SECOND tone (3) looks exactly like a held-beacon's FIRST.
+                // Deliver presence without state — a guessed state would
+                // feed the trigger reconciler false edges.
+                diagnostics.append("lone burst tone=\(pending.tone + 1) on beacon cadence -> beacon(state unknown)")
+                return [.beaconSensed]
             }
             // Lone bursts landing right behind a beacon are the marginal-SNR
             // phantom class (noise splatter off the beacon tones, observed
@@ -202,6 +217,13 @@ public struct GoertzelDetector {
                Double(pending.endWindow - last) * Double(configuration.windowSize) / configuration.sampleRate < 0.6,
                pending.marginDB < configuration.thresholdDB + 4 {
                 diagnostics.append("lone burst tone=\(pending.tone + 1) weak (\(String(format: "%.1f", pending.marginDB))dB) right after beacon — dropped")
+                return []
+            }
+            // Self-calibrated strength gate: a real white press is as loud
+            // as the beacons the device has been sending. Well below that =
+            // noise pop, and firing an action on it runs shell commands.
+            if let reference = beaconMarginEMA, pending.marginDB < reference - 10 {
+                diagnostics.append("lone burst tone=\(pending.tone + 1) \(String(format: "%.1f", pending.marginDB))dB << beacon level \(String(format: "%.1f", reference))dB — dropped")
                 return []
             }
             diagnostics.append("lone burst tone=\(pending.tone + 1) -> whitePress")
@@ -223,27 +245,46 @@ public struct GoertzelDetector {
 
         var hits = [Bool](repeating: false, count: tones.count)
         do {
-            let probeLevels = inBandProbeFrequencies.map { powerDB(window, frequency: $0) }
-            let medianLevel = Self.median(probeLevels)
-            let medianMargin = clipped ? configuration.clippedMedianMarginDB : configuration.thresholdDB
+            let floorMargin = clipped
+                ? configuration.clippedMedianMarginDB - configuration.thresholdDB
+                : 0
             for (index, frequency) in configuration.targetFrequencies.enumerated() {
                 let target = powerDB(window, frequency: frequency)
                 let guardLow = powerDB(window, frequency: frequency - configuration.guardOffset)
                 let guardHigh = powerDB(window, frequency: frequency + configuration.guardOffset)
-                // Margin over the strictest of the three criteria.
+                // Track the per-bin noise floor (skip excited windows).
+                if targetFloors.count <= index {
+                    targetFloors.append(target)
+                }
+                if target < targetFloors[index] + 3 {
+                    targetFloors[index] = 0.9 * targetFloors[index] + 0.1 * target
+                } else {
+                    targetFloors[index] += 0.02   // creep up ~1dB/s: recovers from level shifts
+                }
+                // Margin over the strictest criterion: the guard bins give
+                // frequency selectivity (and wideband rejection — wideband
+                // energy raises guards as much as the target); the bin's own
+                // tracked floor gives level adaptivity. Clipped windows must
+                // clear a larger floor margin, as with the old median rule.
                 let margin = min(
                     target - guardLow,
                     target - guardHigh,
-                    target - (medianLevel + medianMargin - configuration.thresholdDB))
-                // Schmitt trigger: strict to start, lenient to sustain.
+                    target - targetFloors[index] - floorMargin)
+                // Schmitt trigger: strict to start, lenient to sustain —
+                // but sustain is bounded to the burst's own peak so noise
+                // can't stretch a burst past the tone's actual end.
                 let bar = tones[index].isOn ? configuration.sustainDB : configuration.thresholdDB
                 hits[index] = margin >= bar
+                    && (!tones[index].isOn || target >= tones[index].peakDB - 12)
+                if hits[index] {
+                    tones[index].peakDB = max(tones[index].peakDB, target)
+                }
                 // Guard bins DOMINATING the target = energy centered off-bin
                 // moving through the neighborhood (program-audio glide). A
                 // real tone always beats its own sidelobe leakage, and mere
                 // noise flutter fails the 6dB dominance test.
                 if !hits[index],
-                   max(guardLow, guardHigh) >= medianLevel + configuration.thresholdDB,
+                   max(guardLow, guardHigh) >= targetFloors[index] + configuration.thresholdDB,
                    max(guardLow, guardHigh) >= target + 6 {
                     tones[index].guardHotStreak += 1
                     if tones[index].guardHotStreak >= 2 {
@@ -294,6 +335,7 @@ public struct GoertzelDetector {
             state.isOn = true
             state.onStartWindow = now - configuration.onWindows + 1
             state.taintedByApproach = now - state.lastGuardHotWindow <= 4
+            state.peakDB = -200
             if let pending = pendingBurst {
                 pendingBurst = nil
                 let event: TingEvent
@@ -305,6 +347,7 @@ public struct GoertzelDetector {
                     // Fixed pair: handle released.
                     event = .triggerUp
                 case (1, 3):
+                    beaconMarginEMA = beaconMarginEMA.map { 0.8 * $0 + 0.2 * pending.marginDB } ?? pending.marginDB
                     // Fixed pair: beacon heartbeat (~2s). Internal liveness
                     // signal — must NOT enter refractory, or it could swallow
                     // the first burst of a real event chirp right behind it.
@@ -313,6 +356,7 @@ public struct GoertzelDetector {
                     state.suppressNextBurstEnd = true
                     noteBeacon(at: now)
                 case (3, 1):
+                    beaconMarginEMA = beaconMarginEMA.map { 0.8 * $0 + 0.2 * pending.marginDB } ?? pending.marginDB
                     // Fixed pair: beacon while the handle is HELD (state-
                     // carrying heartbeat; like .beacon, never refractory).
                     event = .beaconHeld

@@ -52,15 +52,23 @@ func decodeSamples(_ samples: [Float]) -> [TingEvent] {
 }
 
 func runAudioFixtureTests() {
-    for (name, expectedBeacons) in [("beacons_quiet_9s.wav", 5), ("beacons_quiet_22s.wav", 13)] {
+    // (full beacons, degraded-but-sensed beacons) per fixture: one beacon
+    // in the 22s clip loses its first tone to noise and must surface as
+    // presence-without-state, never a phantom or a guessed handle state.
+    for (name, expectedBeacons, expectedSensed) in [
+        ("beacons_quiet_9s.wav", 5, 0),
+        ("beacons_quiet_22s.wav", 12, 1),
+    ] {
         guard let samples = loadFixtureWAV(name) else {
             expect(false, "fixture \(name) loads")
             continue
         }
         let events = decodeSamples(samples)
         let beacons = events.filter { $0 == .beacon }.count
-        let phantoms = events.filter { $0 != .beacon && $0 != .beaconHeld }
-        expectEqual(beacons, expectedBeacons, "fixture \(name): all \(expectedBeacons) quiet beacons decode")
+        let sensed = events.filter { $0 == .beaconSensed }.count
+        let phantoms = events.filter { $0 != .beacon && $0 != .beaconHeld && $0 != .beaconSensed }
+        expectEqual(beacons, expectedBeacons, "fixture \(name): \(expectedBeacons) full beacons decode")
+        expectEqual(sensed, expectedSensed, "fixture \(name): degraded beacons sensed, not guessed")
         expect(phantoms.isEmpty, "fixture \(name): no phantom events (got \(phantoms.map(\.logDescription)))")
     }
 }

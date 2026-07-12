@@ -88,11 +88,11 @@ func runGoertzelDetectorTests() {
     // action). Off-cadence lone tones still decode as white presses.
     let cadence = silence(0.5) + chirp(1, 3) + silence(1.72) + chirp(1, 3) + silence(1.72)
     expectEqual(decode(cadence + burst(tones[3]) + silence(1)),
-                [.beacon, .beacon, .beaconHeld],
-                "detector: lone held-lead tone on beacon cadence = held beacon")
+                [.beacon, .beacon, .beaconSensed],
+                "detector: lone beacon-slot tone on cadence = presence, state unknown")
     expectEqual(decode(cadence + burst(tones[1]) + silence(1)),
-                [.beacon, .beacon, .beacon],
-                "detector: lone released-lead tone on beacon cadence = beacon")
+                [.beacon, .beacon, .beaconSensed],
+                "detector: lone released-lead tone on cadence = presence, state unknown")
     expectEqual(decode(cadence + silence(0.6) + burst(tones[1]) + silence(1)),
                 [.beacon, .beacon, .whitePress(mode: 2)],
                 "detector: lone tone OFF beacon cadence stays a white press")

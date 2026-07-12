@@ -280,6 +280,11 @@ final class DetectionCoordinator {
             onTriggerHint?(true)
             return
         }
+        if event == .beaconSensed {
+            // Presence proven, handle state ambiguous: refresh liveness
+            // (handled above with the other beacons) but never hint.
+            return
+        }
         onEvent?(event)
     }
 
