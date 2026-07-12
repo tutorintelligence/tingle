@@ -112,7 +112,7 @@ abandoned after 10s. Completed takes stack (cap 10): each green press erases
 exactly the characters of one more take (same app, ≤5min). Consecutive takes
 in the same app auto-join with a space.
 
-### Rewrite pass (optional, `[rewrite]` in config)
+### Rewrite pass (`[rewrite]` in config, on by default)
 
 After a take finalizes, Apple's on-device Foundation model (Apple
 Intelligence, macOS 26+) polishes it in place: punctuation, repeated-word
@@ -134,16 +134,32 @@ model runs. Eligibility band: 4-150 words.
 
 ## Configuration
 
-Literate TOML at `~/Library/Application Support/tingle/config.toml`,
-live-reloaded; the shipped default file is its own documentation. Mappings:
-`mode1`–`mode4`, `modeChange`, `fxChange`, `triggerDown`, `triggerUp` →
-actions `dictate`, `eraseDictation`, `keystroke`, `keyHold` and `shell`
-(multiline scripts via TOML `\'\'\'` strings). `vocabulary` biases dictation
-via `AnalysisContext.contextualStrings`. tingle never writes the file after
-creation — menu-driven state (the pinned input device) lives in
-UserDefaults so user comments survive. Defaults: trigger = dictate, orange
-= enter, green = erase last take, white unmapped (a commented "summon your
-agent" script ships in the template).
+Two TOML files in `~/Library/Application Support/tingle/`, layered:
+
+- `default-config.toml` — the full literate defaults, REWRITTEN by the app
+  on every launch so it always documents the running version. A mirror,
+  not a source: the app parses the embedded template, never this file, so
+  a mangled mirror can't break anything. Browse it, copy from it.
+- `config.toml` — the user's file, containing only what they change.
+  tingle writes a near-empty starter once and never touches it again
+  (menu-driven state lives in UserDefaults so user comments survive).
+  Live-reloaded on save.
+
+Merge semantics are plain per-key precedence: a key in config.toml wins
+wholesale (lists and inline action tables included — no bleed-through);
+section tables ([mappings], [replacements], [rewrite]) merge per
+contained key, so overriding one mapping keeps the rest. Where different
+semantics are wanted, the schema provides them instead of merge magic:
+`vocabulary` is the built-in biasing list and `extraVocabulary` is the
+user's additions, concatenated (deduped) at load — so built-in list
+updates keep flowing to configs that only add words.
+
+Mappings: `mode1`–`mode4`, `modeChange`, `fxChange`, `triggerDown`,
+`triggerUp` → actions `dictate`, `eraseDictation`, `keystroke`, `keyHold`
+and `shell` (multiline scripts via TOML `\'\'\'` strings). Vocabulary
+biases dictation via `AnalysisContext.contextualStrings`. Defaults:
+trigger = dictate, orange = enter, green = erase last take, white =
+summon-agent script.
 
 ## Distribution
 

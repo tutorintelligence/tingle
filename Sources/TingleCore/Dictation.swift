@@ -105,7 +105,7 @@ final class DictationController {
         isFinalizing = false
         let newSession = DictationSession(
             deviceUID: PinnedInput.uid,
-            vocabulary: configStore.config.vocabulary,
+            vocabulary: configStore.config.effectiveVocabulary,
             replacements: configStore.config.replacements,
             audioBackendProvider: { [weak coordinator] in coordinator?.runningAudioBackend },
             prefixSpace: needsLeadingSpace()
@@ -213,7 +213,7 @@ final class DictationController {
         rewriteGeneration += 1
         let generation = rewriteGeneration
         let takeStamp = takeStack.last?.endedAt
-        let vocabulary = config.vocabulary
+        let vocabulary = config.effectiveVocabulary
         let rewriteConfig = config.rewrite
         let model = rewriteModel
         let log = self.log

@@ -108,28 +108,28 @@ its heartbeat.
 | green button | erase the last dictated take (repeat for earlier takes) |
 | white button | summon your agent — brings the first running AI coding app (Claude, Codex, Cursor, iTerm2, Terminal) to the front |
 
-Every one of these is just a default. tingle is configurable by design: the
-whole control scheme lives in the TOML file below, and any behavior — the
-summon list, what green erases, what orange sends, the dictation vocabulary —
-is yours to change.
+Every one of these is just a default. tingle is configurable by design —
+the summon list, what each button does, the dictation vocabulary, the
+rewrite pass — but the defaults are meant to be good enough that most
+people never open the config.
 
 ## Configuration
 
-Everything lives in one literate TOML file —
-`~/Library/Application Support/tingle/config.toml` ("Edit config…" in the
-menu) — which documents itself and live-reloads on save:
+Two files in `~/Library/Application Support/tingle/`:
+`default-config.toml` holds every option, documented, and is refreshed by
+the app on every launch — it's the reference, so new options and new
+built-in vocabulary arrive with updates. Your own `config.toml` ("Edit
+config…" in the menu) contains only what you change: copy any key over,
+edit it, save — it wins over the default and reloads live.
 
 ```toml
-vocabulary = ["Claude", "Codex", "kubectl"]   # bias recognition toward your jargon
+extraVocabulary = ["Metabase", "kubectl"]     # your jargon, added onto the built-in list
 
 [replacements]                                # fix what biasing can't
 "Tamil" = "TOML"
 
-[mappings]
-triggerDown = { type = "dictate" }
-fxChange    = { type = "keystroke", key = "return" }
-modeChange  = { type = "eraseDictation" }
-mode1       = { type = "shell", command = """
+[mappings]                                    # merges per key with the defaults
+mode1 = { type = "shell", command = """
 open -a "Claude"                              # multiline scripts welcome
 """ }
 ```
@@ -141,8 +141,8 @@ slots (`mode1`–`mode4`), selected by the ting's green mode LED.
 Dictation uses Apple's on-device speech stack (macOS 26+). Everything else
 works on macOS 13+.
 
-With Apple Intelligence available, an optional `[rewrite]` section enables
-an on-device LLM polish of each take a moment after you release: fillers
+With Apple Intelligence available, an on-device LLM polishes each take a
+moment after you release (on by default; `[rewrite]` in the config): fillers
 gone, punctuation fixed, your jargon corrected — all locally, nothing
 leaves the Mac, and it never touches your words' meaning (degenerate model
 output is rejected and your original text stays).

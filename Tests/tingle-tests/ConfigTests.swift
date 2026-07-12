@@ -9,8 +9,9 @@ func runConfigTests() {
         expect(config.vocabulary.contains("TOML"), "config: TOML never Tamil again")
         expect(config.vocabulary.contains("Claude"), "config: Claude in vocabulary")
         expect(config.vocabulary.contains("subagent"), "config: agentic terms present")
-        expectEqual(Set(config.vocabulary), Set(ConfigStore.defaultVocabulary),
-                    "config: TOML template and Swift default vocabulary stay in sync")
+        expect(config.extraVocabulary.isEmpty, "config: defaults ship no extra vocabulary")
+        expectEqual(config.effectiveVocabulary, config.vocabulary,
+                    "config: effective vocabulary is builtin when extras empty")
         expectEqual(config.mappings["triggerDown"], .dictate, "config: default trigger mapping")
         expectEqual(config.mappings["modeChange"], .eraseDictation, "config: default green mapping")
         expectEqual(config.mappings["fxChange"], .keystroke(key: "return", modifiers: []), "config: default orange mapping")
@@ -23,6 +24,53 @@ func runConfigTests() {
         }
         expectEqual(config.action(for: .whitePress(mode: 3)), config.mappings["white"],
                     "config: whitePress falls back to the white catch-all")
+    }
+    do { // layered parse: user file overlays defaults with per-key precedence
+        let empty = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: "")
+        expectEqual(empty.effectiveVocabulary, TingConfig.default.effectiveVocabulary,
+                    "layering: empty user file yields pure defaults")
+        expectEqual(empty.mappings["triggerDown"], .dictate, "layering: default mappings survive empty overlay")
+
+        let starter = try! TingConfig.parse(defaults: ConfigStore.defaultTOML,
+                                            user: ConfigStore.userTemplateTOML)
+        expectEqual(starter.effectiveVocabulary, TingConfig.default.effectiveVocabulary,
+                    "layering: starter template changes nothing")
+
+        let overlay = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: """
+        extraVocabulary = ["Metabase", "TOML"]
+
+        [rewrite]
+        enabled = true
+
+        [mappings]
+        mode1 = { type = "keystroke", key = "escape" }
+        fxChange = { type = "keystroke", key = "tab" }
+        """)
+        // section tables merge per key: the one switched key changes...
+        expect(overlay.rewrite.enabled, "layering: user rewrite.enabled wins")
+        // ...and untouched keys still come from defaults, not decode zeroes.
+        expect(overlay.rewrite.removeFillers, "layering: untouched rewrite keys keep defaults")
+        expect(overlay.rewrite.correctVocabulary, "layering: untouched rewrite keys keep defaults 2")
+        expectEqual(overlay.mappings["mode1"], .keystroke(key: "escape", modifiers: []),
+                    "layering: new mapping added")
+        expectEqual(overlay.mappings["triggerDown"], .dictate,
+                    "layering: unmentioned mappings survive")
+        // inline action tables replace WHOLESALE - no field bleed-through
+        // from the default action into the user's replacement.
+        expectEqual(overlay.mappings["fxChange"], .keystroke(key: "tab", modifiers: []),
+                    "layering: overridden mapping replaced wholesale")
+        // extraVocabulary concatenates after the builtin list, deduped.
+        expect(overlay.effectiveVocabulary.contains("Metabase"), "layering: extra vocabulary appended")
+        expectEqual(overlay.effectiveVocabulary.filter { $0 == "TOML" }.count, 1,
+                    "layering: effective vocabulary dedupes")
+        expect(overlay.effectiveVocabulary.count > 100, "layering: builtin vocabulary retained")
+
+        // a user list key overrides wholesale - the documented escape hatch.
+        let replaced = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: """
+        vocabulary = ["OnlyWord"]
+        """)
+        expectEqual(replaced.effectiveVocabulary, ["OnlyWord"],
+                    "layering: user vocabulary key discards builtins wholesale")
     }
     do { // multiline embedded script + all action types
         let toml = """

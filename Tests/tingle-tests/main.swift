@@ -57,7 +57,7 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--rewrite-eval
     var config = RewriteConfig()
     config.enabled = true
     config.technicalFormatting = true
-    let instructions = RewritePrompt.instructions(config: config, vocabulary: ConfigStore.defaultVocabulary)
+    let instructions = RewritePrompt.instructions(config: config, vocabulary: TingConfig.default.effectiveVocabulary)
     let model = FoundationRewriteModel()
     guard model.isAvailable else { print("Foundation model unavailable (Apple Intelligence off?)"); exit(1) }
     let sema = DispatchSemaphore(value: 0)
