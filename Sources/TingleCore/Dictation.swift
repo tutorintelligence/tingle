@@ -663,8 +663,8 @@ final class DictationSession {
 /// main thread, and a configuration change abandons the engine rather than
 /// reusing it). attach() is called from dictation's session task, never
 /// from main, so its bounded queue hop is safe.
-final class WarmCapture {
-    static let shared = WarmCapture()
+public final class WarmCapture {
+    public static let shared = WarmCapture()
 
     /// AudioEngineOps.queue only.
     private var engine: AVAudioEngine?
@@ -678,7 +678,7 @@ final class WarmCapture {
     /// Attach a buffer consumer, starting (or reusing) the engine pinned to
     /// the given device. Returns false if the engine could not start.
     /// Blocks the calling (non-main!) thread for the engine spin-up.
-    func attach(uid resolvedUID: String, consumer newConsumer: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
+    public func attach(uid resolvedUID: String, consumer newConsumer: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
         #if DEBUG
         // sync onto the engine queue from main would recreate the freeze
         // this design exists to prevent; dictation always attaches from
@@ -746,7 +746,7 @@ final class WarmCapture {
 
     /// Detach the consumer; the engine idles for 60s in case another
     /// session follows, then tears down (clears the mic-in-use indicator).
-    func detach() {
+    public func detach() {
         lock.lock(); consumer = nil; lock.unlock()
         AudioEngineOps.queue.async { [self] in
             idleTeardown?.cancel()

@@ -84,6 +84,7 @@ runWhiteFallbackTests()
 runAudioFixtureTests()
 runDetectorSweepTests()
 runAudioEngineOpsTests()
+runAudioHardwareTests()
 
 print(failures == 0 ? "OK — \(passes) assertions passed"
                     : "FAILED — \(failures) failures, \(passes) passed")
