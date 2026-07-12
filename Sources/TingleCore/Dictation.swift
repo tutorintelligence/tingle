@@ -15,6 +15,8 @@ final class DictationController {
     /// Menu status override; nil = not dictating. Delivered on the main queue.
     /// ("Preparing speech model…", "Dictating…", "Inserted N words")
     var onStatusChange: ((String?) -> Void)?
+    /// True while a model rewrite is in flight (drives the blue menu dot).
+    var onRewriteActive: ((Bool) -> Void)?
 
     private let configStore: ConfigStore
     private let coordinator: DetectionCoordinator
@@ -27,8 +29,8 @@ final class DictationController {
     /// Completed takes, newest last — repeated green presses peel them
     /// back one at a time. Also drives the between-takes leading space.
     private struct LastSession {
-        let characterCount: Int
-        let lastCharacter: Character?
+        var characterCount: Int
+        var lastCharacter: Character?
         let bundleID: String?
         let endedAt: Date
     }
@@ -82,6 +84,7 @@ final class DictationController {
             onStatusChange?(nil)
         }
         sessionStartedAt = Date()
+        cancelPendingRewrite()
         guard actionRunner.ensureAccessibility() else {
             log.error("Accessibility not granted; dictation cannot type into the frontmost app")
             NSSound.beep()
@@ -110,9 +113,10 @@ final class DictationController {
         newSession.onStatus = { [weak self] text in
             DispatchQueue.main.async { self?.onStatusChange?(text) }
         }
-        newSession.onFinished = { [weak self] wordCount, charCount, lastChar in
+        newSession.onFinished = { [weak self] wordCount, charCount, lastChar, text in
             DispatchQueue.main.async {
-                self?.sessionFinished(wordCount: wordCount, characterCount: charCount, lastCharacter: lastChar)
+                self?.sessionFinished(wordCount: wordCount, characterCount: charCount,
+                                      lastCharacter: lastChar, text: text)
             }
         }
         session = newSession
@@ -156,6 +160,7 @@ final class DictationController {
             // session already started): the user meant the previous take.
             // Fall through and erase lastSession; never touch the live one.
         }
+        cancelPendingRewrite()
         guard let last = takeStack.last, last.characterCount > 0 else {
             log.info("eraseDictation: nothing to erase")
             flashStatus("Nothing to erase")
@@ -186,6 +191,85 @@ final class DictationController {
         }
     }
 
+    // MARK: - Post-dictation rewrite pass
+
+    private let rewriteModel = FoundationRewriteModel()
+    /// Any user action invalidates a pending rewrite; bumping the
+    /// generation makes an in-flight result apply to nothing.
+    private var rewriteGeneration = 0
+
+    func cancelPendingRewrite() {
+        rewriteGeneration += 1
+    }
+
+    private func scheduleRewrite(of text: String) {
+        let config = configStore.config
+        guard config.rewrite.enabled else { return }
+        guard RewritePrompt.eligible(text) else {
+            let words = text.split(separator: " ").count
+            log.info("rewrite skipped: \(words) words outside \(RewritePrompt.eligibleWords.lowerBound, privacy: .public)-\(RewritePrompt.eligibleWords.upperBound, privacy: .public) word band")
+            return
+        }
+        rewriteGeneration += 1
+        let generation = rewriteGeneration
+        let takeStamp = takeStack.last?.endedAt
+        let vocabulary = config.vocabulary
+        let rewriteConfig = config.rewrite
+        let model = rewriteModel
+        let log = self.log
+        let modelWillRun = model.isAvailable
+        let notifyRewriteActive = onRewriteActive
+        if modelWillRun { notifyRewriteActive?(true) }
+        Task { [weak self] in
+            defer { if modelWillRun { DispatchQueue.main.async { notifyRewriteActive?(false) } } }
+            let started = Date()
+            var candidate = rewriteConfig.removeFillers ? RewritePrompt.stripFillers(text) : text
+            // Stage-by-stage logging (local unified log only): this is the
+            // ground truth for separating model behavior from apply bugs.
+            log.info("rewrite in: \(text, privacy: .public)")
+            if candidate != text {
+                log.info("rewrite filler-stripped: \(candidate, privacy: .public)")
+            }
+            if model.isAvailable {
+                let instructions = RewritePrompt.instructions(config: rewriteConfig, vocabulary: vocabulary)
+                if let out = try? await model.rewrite(candidate, instructions: instructions) {
+                    let processed = RewritePrompt.postProcess(out)
+                    log.info("rewrite model out: \(processed, privacy: .public)")
+                    if let reason = RewritePrompt.gate(input: candidate, output: processed) {
+                        log.info("rewrite REJECTED by gate (\(reason, privacy: .public)); keeping filler-stripped text")
+                    } else {
+                        candidate = processed
+                    }
+                } else {
+                    log.info("rewrite model call FAILED")
+                }
+            }
+            guard candidate != text else {
+                log.info("rewrite is a no-op; nothing to apply")
+                return
+            }
+            let finalText = candidate
+            let elapsed = Date().timeIntervalSince(started)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                // Apply only if the world hasn't moved: same generation
+                // (no user action), same take on top, same focused app.
+                guard self.rewriteGeneration == generation,
+                      let last = self.takeStack.last, last.endedAt == takeStamp,
+                      last.bundleID == NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                else {
+                    log.info("rewrite discarded (state moved on, \(String(format: "%.2f", elapsed), privacy: .public)s)")
+                    return
+                }
+                let edit = RewritePrompt.edit(from: text, to: finalText)
+                DictationKeystrokes.post(edit)
+                self.takeStack[self.takeStack.count - 1].characterCount = finalText.count
+                self.takeStack[self.takeStack.count - 1].lastCharacter = finalText.last
+                log.info("rewrite applied in \(String(format: "%.2f", elapsed), privacy: .public)s: -\(edit.backspaces) backspaces, retyped: \(edit.append, privacy: .public)")
+            }
+        }
+    }
+
     /// A keystroke/keyHold action is about to type while dictation is live:
     /// the field is changing under the typer, so freeze what's on screen —
     /// corrections must not backspace over it (the overwrite bug).
@@ -194,7 +278,7 @@ final class DictationController {
         active.freezeVolatile()
     }
 
-    private func sessionFinished(wordCount: Int, characterCount: Int, lastCharacter: Character?) {
+    private func sessionFinished(wordCount: Int, characterCount: Int, lastCharacter: Character?, text: String) {
         session = nil
         isFinalizing = false
 
@@ -224,6 +308,7 @@ final class DictationController {
             eraseLastSession()
             return
         }
+        scheduleRewrite(of: text)
         onStatusChange?("Inserted \(wordCount) word\(wordCount == 1 ? "" : "s")")
         statusGeneration += 1
         let generation = statusGeneration
@@ -249,7 +334,7 @@ final class DictationController {
 final class DictationSession {
     var onStatus: ((String?) -> Void)?
     /// (wordCount, characterCount, lastCharacter)
-    var onFinished: ((Int, Int, Character?) -> Void)?
+    var onFinished: ((Int, Int, Character?, String) -> Void)?
 
     private let deviceUID: String?
     /// Config vocabulary applied as contextual strings (recognition bias).
@@ -402,11 +487,11 @@ final class DictationSession {
             inputBuilder?.finish()
             resultsTask?.cancel()
             onStatus?(nil)
-            let (words, chars, lastChar): (Int, Int, Character?) = typeQueue.sync {
+            let (words, chars, lastChar, text): (Int, Int, Character?, String) = typeQueue.sync {
                 typer.finish()
-                return (typer.wordCount, typer.committedText.count, typer.committedText.last)
+                return (typer.wordCount, typer.committedText.count, typer.committedText.last, typer.committedText)
             }
-            onFinished?(words, chars, lastChar)
+            onFinished?(words, chars, lastChar, text)
         }
     }
 
@@ -438,12 +523,12 @@ final class DictationSession {
             log.error("dictation finalize timed out after 5s; forcing session teardown")
             resultsTask?.cancel()
         }
-        let (words, chars, lastChar): (Int, Int, Character?) = typeQueue.sync {
+        let (words, chars, lastChar, text): (Int, Int, Character?, String) = typeQueue.sync {
             typer.finish()
-            return (typer.wordCount, typer.committedText.count, typer.committedText.last)
+            return (typer.wordCount, typer.committedText.count, typer.committedText.last, typer.committedText)
         }
         log.info("dictation finished: \(words) words")
-        onFinished?(words, chars, lastChar)
+        onFinished?(words, chars, lastChar, text)
     }
 
     /// Results-loop side: store the hypothesis and kick the typing worker.

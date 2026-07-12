@@ -87,6 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissions = PermissionsMonitor()
         statusItemController = StatusItemController(
             configStore: configStore, coordinator: coordinator, permissions: permissions)
+        dictation.onRewriteActive = { [weak self] active in
+            self?.statusItemController?.setRewriteActive(active)
+        }
         dictation.onStatusChange = { [weak self] text in
             self?.statusItemController?.setDictationStatus(text)
         }
@@ -130,6 +133,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handle(event: TingEvent) {
+        // Any real user gesture invalidates a pending dictation rewrite —
+        // especially orange (send): text that may already be submitted
+        // must never be edited afterward.
+        switch event {
+        case .beacon, .beaconHeld, .beaconSensed: break
+        default: dictation.cancelPendingRewrite()
+        }
         log.info("event: \(event.logDescription, privacy: .public)")
 
         if event == .triggerDown || event == .triggerUp {

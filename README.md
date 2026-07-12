@@ -141,6 +141,12 @@ slots (`mode1`–`mode4`), selected by the ting's green mode LED.
 Dictation uses Apple's on-device speech stack (macOS 26+). Everything else
 works on macOS 13+.
 
+With Apple Intelligence available, an optional `[rewrite]` section enables
+an on-device LLM polish of each take a moment after you release: fillers
+gone, punctuation fixed, your jargon corrected — all locally, nothing
+leaves the Mac, and it never touches your words' meaning (degenerate model
+output is rejected and your original text stays).
+
 ## How it works
 
 The ting executes user Python from its USB disk at boot. tingle ships an

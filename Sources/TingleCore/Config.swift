@@ -93,6 +93,37 @@ extension TingAction: Codable {
 /// The user's configuration, parsed from literate TOML. TOML has no null,
 /// so an unmapped input is simply an absent key; every field is optional
 /// with sensible defaults.
+/// Post-dictation LLM rewrite pass (Apple's on-device Foundation model).
+/// Every bool maps to a fixed prompt fragment; `customInstructions` is the
+/// only freeform field and is appended last. All inert unless `enabled`.
+public struct RewriteConfig: Decodable, Equatable {
+    public var enabled = false
+    public var removeFillers = true
+    public var fixPunctuation = true
+    public var fixGrammar = false
+    public var correctVocabulary = true
+    public var technicalFormatting = false
+    public var customInstructions = ""
+
+    public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, removeFillers, fixPunctuation, fixGrammar,
+             correctVocabulary, technicalFormatting, customInstructions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        removeFillers = try c.decodeIfPresent(Bool.self, forKey: .removeFillers) ?? true
+        fixPunctuation = try c.decodeIfPresent(Bool.self, forKey: .fixPunctuation) ?? true
+        fixGrammar = try c.decodeIfPresent(Bool.self, forKey: .fixGrammar) ?? false
+        correctVocabulary = try c.decodeIfPresent(Bool.self, forKey: .correctVocabulary) ?? true
+        technicalFormatting = try c.decodeIfPresent(Bool.self, forKey: .technicalFormatting) ?? false
+        customInstructions = try c.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
+    }
+}
+
 public struct TingConfig: Decodable {
     /// The four mode tone frequencies (Hz), in mode order 1–4.
     public var toneFrequencies: [Double]
@@ -106,6 +137,8 @@ public struct TingConfig: Decodable {
     /// segments (word-boundary, case-sensitive). The escape hatch for
     /// words the recognizer's lexicon simply refuses to produce.
     public var replacements: [String: String]
+    /// Post-dictation LLM rewrite pass.
+    public var rewrite: RewriteConfig
 
     /// The default white-button action: bring the first running AI coding
     /// app to the front, ready to dictate into.
@@ -146,15 +179,17 @@ done
     )
 
     init(toneFrequencies: [Double], vocabulary: [String],
-         mappings: [String: TingAction], replacements: [String: String] = [:]) {
+         mappings: [String: TingAction], replacements: [String: String] = [:],
+         rewrite: RewriteConfig = RewriteConfig()) {
         self.toneFrequencies = toneFrequencies
         self.vocabulary = vocabulary
         self.mappings = mappings
         self.replacements = replacements
+        self.rewrite = rewrite
     }
 
     private enum CodingKeys: String, CodingKey {
-        case toneFrequencies, vocabulary, mappings, replacements
+        case toneFrequencies, vocabulary, mappings, replacements, rewrite
     }
 
     public init(from decoder: Decoder) throws {
@@ -164,6 +199,7 @@ done
         vocabulary = try container.decodeIfPresent([String].self, forKey: .vocabulary) ?? []
         mappings = try container.decodeIfPresent([String: TingAction].self, forKey: .mappings) ?? [:]
         replacements = try container.decodeIfPresent([String: String].self, forKey: .replacements) ?? [:]
+        rewrite = try container.decodeIfPresent(RewriteConfig.self, forKey: .rewrite) ?? RewriteConfig()
     }
 
     /// Word-boundary, case-sensitive corrections for finalized transcript
@@ -607,6 +643,22 @@ public final class ConfigStore {
     "Tamil" = "TOML"
     "clawed" = "Claude"
     "Clawed" = "Claude"
+
+    # After each take, an on-device language model (Apple Intelligence,
+    # macOS 26+) can lightly clean the text in place: the take types
+    # live as usual, then the polish lands a second later through the
+    # same typing mechanics. Sending, erasing, a new squeeze, or
+    # switching apps cancels a pending polish. Every switch below is a
+    # fixed, tested instruction; customInstructions is freeform and is
+    # applied last. Filler removal works even without Apple Intelligence.
+    [rewrite]
+    enabled = false
+    removeFillers = true        # delete um/uh/er and the comma debris they leave
+    fixPunctuation = true       # sentence boundaries, capitalization, run-ons
+    fixGrammar = false          # light repair only; off because the model sometimes over-normalizes
+    correctVocabulary = true    # let the model fix near-miss transcriptions of your vocabulary terms
+    technicalFormatting = false # "dash dash force" -> "--force", "foo dot py" -> "foo.py"
+    customInstructions = ""
 
     [mappings]
     # Squeeze to dictate into whatever app is focused.

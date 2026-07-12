@@ -187,6 +187,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// True while the handle is physically squeezed (triggerDown..triggerUp).
     private var triggerHeld = false
+    /// True while the post-dictation AI rewrite is in flight (blue dot).
+    private var rewriteActive = false
     /// Non-nil while a Flash EP / Restore stock operation runs; overrides
     /// everything on the status line and shows the dimmed-grille/yellow icon.
     private var flashStatus: String?
@@ -199,6 +201,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func setTriggerHeld(_ held: Bool) {
         triggerHeld = held
+        refreshIcon()
+    }
+
+    func setRewriteActive(_ active: Bool) {
+        rewriteActive = active
         refreshIcon()
     }
 
@@ -238,6 +245,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let dot: MenuBarIcon.Dot
         if dictating {
             dot = .active
+        } else if rewriteActive {
+            // The AI cleanup pass between release and the applied edit —
+            // squeezing again takes priority (red wins above).
+            dot = .polishing
         } else {
             switch lastBackendState {
             case .connectedSerial, .tingDetected:

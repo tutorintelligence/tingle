@@ -112,6 +112,26 @@ abandoned after 10s. Completed takes stack (cap 10): each green press erases
 exactly the characters of one more take (same app, ≤5min). Consecutive takes
 in the same app auto-join with a space.
 
+### Rewrite pass (optional, `[rewrite]` in config)
+
+After a take finalizes, Apple's on-device Foundation model (Apple
+Intelligence, macOS 26+) polishes it in place: punctuation, repeated-word
+dedup, vocabulary-aware mis-transcription repair, optional symbol-speak
+("dash dash force" → `--force`). Division of labor: everything mechanical
+is deterministic code — um/uh/er stripping is a regex, model preambles and
+markdown are stripped in post — and the model only does judgment work.
+The transcript is sent wrapped in `<transcript>` tags as data, never as a
+message, and an acceptability gate rejects degenerate outputs (answers,
+refusals, censored profanity — every profane token in must come out, same
+count; word retention ≥0.35; bounded growth). A rejected output degrades
+to the filler-stripped text; a no-op applies nothing. The polish lands
+~1-3s after release as a single prefix-cut keystroke edit (delete back to
+the first changed character, retype the rest — backspaces cannot reach
+past a common suffix, so no other diff shape is valid). The pending
+rewrite is cancelled by anything that moves the world: a new squeeze,
+erase, send, or app switch; the menu bar icon shows a blue dot while the
+model runs. Eligibility band: 4-150 words.
+
 ## Configuration
 
 Literate TOML at `~/Library/Application Support/tingle/config.toml`,

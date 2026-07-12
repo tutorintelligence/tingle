@@ -47,6 +47,41 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--decode" {
     exit(0)
 }
 
+// Rewrite eval harness: `swift run tingle-tests --rewrite-eval file.txt`
+// runs each =====-separated dictation through the REAL on-device model
+// with the shipped prompt (requires Apple Intelligence; local tool, not
+// CI). This is how the prompt gets tuned against actual dictations.
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--rewrite-eval" {
+    let raw = (try? String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)) ?? ""
+    let cases = raw.components(separatedBy: "\n=====\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    var config = RewriteConfig()
+    config.enabled = true
+    config.technicalFormatting = true
+    let instructions = RewritePrompt.instructions(config: config, vocabulary: ConfigStore.defaultVocabulary)
+    let model = FoundationRewriteModel()
+    guard model.isAvailable else { print("Foundation model unavailable (Apple Intelligence off?)"); exit(1) }
+    let sema = DispatchSemaphore(value: 0)
+    Task {
+        for (i, text) in cases.enumerated() {
+            guard RewritePrompt.eligible(text) else { print("[\(i)] SKIP (size)"); continue }
+            let t0 = Date()
+            do {
+                let stripped = RewritePrompt.stripFillers(text)
+                let out = RewritePrompt.postProcess(try await model.rewrite(stripped, instructions: instructions))
+                let ok = RewritePrompt.acceptable(input: text, output: out)
+                print("[\(i)] \(String(format: "%.2f", Date().timeIntervalSince(t0)))s \(ok ? "" : "REJECTED-BY-GATE")")
+                print("  IN : \(text.prefix(400))")
+                print("  OUT: \(out.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))")
+            } catch {
+                print("[\(i)] ERROR \(error)")
+            }
+        }
+        sema.signal()
+    }
+    sema.wait()
+    exit(0)
+}
+
 // Minimal dependency-free test harness: XCTest is unavailable under bare
 // CommandLineTools, and tests that only run in CI can't drive a
 // data-driven local loop. Run: swift run tingle-tests
@@ -81,6 +116,7 @@ runBatteryEstimateTests()
 runReplacementTests()
 runWhiteFallbackTests()
 runSymbolDetectorTests()
+runRewriteTests()
 runAudioEngineOpsTests()
 runAudioHardwareTests()
 

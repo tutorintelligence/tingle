@@ -28,6 +28,7 @@ enum MenuBarIcon {
         case present    // green
         case active     // red
         case busy       // yellow: flashing the device
+        case polishing  // blue: AI rewrite pass in flight
 
         var color: NSColor? {
             switch self {
@@ -36,6 +37,7 @@ enum MenuBarIcon {
             case .present: return .systemGreen
             case .active: return .systemRed
             case .busy: return .systemYellow
+            case .polishing: return .systemBlue
             }
         }
     }
