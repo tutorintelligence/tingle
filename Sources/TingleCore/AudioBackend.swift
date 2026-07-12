@@ -26,7 +26,7 @@ public final class AudioBackend: TingBackend {
     public private(set) var isRunning = false
     private(set) var deviceName = "default input"
     /// The tap's native input format, available once the engine is running.
-    private(set) var inputFormat: AVAudioFormat?
+    public private(set) var inputFormat: AVAudioFormat?
 
     private let deviceUID: String
     private let frequencies: [Double]
@@ -55,7 +55,7 @@ public final class AudioBackend: TingBackend {
     /// Called synchronously on the tap's audio thread; DSP is unaffected.
     private let consumerLock = NSLock()
     private var _bufferConsumer: ((AVAudioPCMBuffer) -> Void)?
-    var bufferConsumer: ((AVAudioPCMBuffer) -> Void)? {
+    public var bufferConsumer: ((AVAudioPCMBuffer) -> Void)? {
         get {
             consumerLock.lock()
             defer { consumerLock.unlock() }
@@ -225,8 +225,17 @@ public final class AudioBackend: TingBackend {
         // Spurious post-start notification (see AudioEngineOps.stillHealthy):
         // the engine is fine — rebuilding here would loop forever, since
         // every rebuild posts another one.
-        if let format = engineFormat,
-           AudioEngineOps.stillHealthy(changed, sampleRate: format.sampleRate, channelCount: format.channelCount) {
+        let healthy: Bool
+        if let probe = _testHealthProbeOverride {
+            _testHealthProbeOverride = nil   // one-shot, or the rebuild's own
+                                             // spurious notification re-fires it
+            healthy = probe()
+        } else if let format = engineFormat {
+            healthy = AudioEngineOps.stillHealthy(changed, sampleRate: format.sampleRate, channelCount: format.channelCount)
+        } else {
+            healthy = false
+        }
+        if healthy {
             log.info("engine survived the configuration change; keeping it")
             return
         }
@@ -263,6 +272,24 @@ public final class AudioBackend: TingBackend {
         AudioEngineOps.bounded {
             if removeTap { engine.inputNode.removeTap(onBus: 0) }
             engine.stop()
+        }
+    }
+
+    // MARK: - Test seams
+
+    /// Hardware integration tests only (see AudioHardwareTests). Replaces
+    /// the next config-change health probe exactly once; returning false
+    /// forces the teardown-and-rebuild path deterministically — the real
+    /// wedge cannot be simulated on a healthy device.
+    public var _testHealthProbeOverride: (() -> Bool)?
+
+    /// Hardware integration tests only: post the configuration-change
+    /// notification for the live engine, as AVFAudio would on a device
+    /// change.
+    public func _testPostConfigurationChange() {
+        AudioEngineOps.queue.async { [self] in
+            guard let engine else { return }
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
         }
     }
 
