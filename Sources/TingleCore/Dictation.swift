@@ -204,7 +204,12 @@ final class DictationController {
 
     private func scheduleRewrite(of text: String) {
         let config = configStore.config
-        guard config.rewrite.enabled, RewritePrompt.eligible(text) else { return }
+        guard config.rewrite.enabled else { return }
+        guard RewritePrompt.eligible(text) else {
+            let words = text.split(separator: " ").count
+            log.info("rewrite skipped: \(words) words outside \(RewritePrompt.eligibleWords.lowerBound, privacy: .public)-\(RewritePrompt.eligibleWords.upperBound, privacy: .public) word band")
+            return
+        }
         rewriteGeneration += 1
         let generation = rewriteGeneration
         let takeStamp = takeStack.last?.endedAt

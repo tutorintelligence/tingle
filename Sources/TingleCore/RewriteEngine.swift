@@ -72,10 +72,11 @@ public enum RewritePrompt {
     }
 
     /// A take is worth rewriting only in a size band: tiny takes gain
-    /// nothing, huge ones risk context and latency.
+    /// nothing, huge ones risk context and latency (a 230-word take
+    /// measured ~4s; the band is generous but bounded).
+    public static let eligibleWords = 4...400
     public static func eligible(_ text: String) -> Bool {
-        let words = text.split(separator: " ").count
-        return words >= 4 && words <= 150
+        eligibleWords.contains(text.split(separator: " ").count)
     }
 
     /// Mechanical cleanup of model tics: strip meta-preambles and wrapping
