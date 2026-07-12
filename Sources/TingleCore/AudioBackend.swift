@@ -39,6 +39,16 @@ public final class AudioBackend: TingBackend {
     private var tapInstalled = false
     private var configChangeObserver: NSObjectProtocol?
     private var detector: SymbolDetector?
+    /// Set before start(): last known good beacon level (dBFS) to seed the
+    /// detector's fast re-lock memory.
+    var seedBeaconLevelDB: Double?
+
+    /// Thread-safe snapshot of the detector's pilot state for the beacon
+    /// scanner (acquisition-in-progress extends the scan dwell; the level
+    /// memory is carried into the next backend instance).
+    func detectorSnapshot() -> (acquiring: Bool, levelMemoryDB: Double?) {
+        detectionQueue.sync { (detector?.acquiring ?? false, detector?.levelMemoryDB) }
+    }
     private let detectionQueue = DispatchQueue(label: "tingle.audio.detection")
     /// Set by stop() (any thread), read on AudioEngineOps.queue.
     private let stoppedLock = NSLock()
@@ -135,8 +145,12 @@ public final class AudioBackend: TingBackend {
             return
         }
         // Fresh detector, serialized with the tap's processing blocks so a
-        // rebuild never races mid-burst DSP.
-        let detector = SymbolDetector()
+        // rebuild never races mid-burst DSP. Seed the previous lock's level
+        // so wake-from-sleep can fast re-lock on a single beacon (device
+        // switches used to discard that memory, forcing the slow 3-beacon
+        // acquisition into every scan dwell).
+        var detector = SymbolDetector()
+        if let seed = seedBeaconLevelDB { detector.seedRememberedLevel(seed) }
         detectionQueue.async { self.detector = detector }
 
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in

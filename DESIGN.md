@@ -51,9 +51,15 @@ its belief — from decoded beacon words only (serial `EVT beacon` lines
 are stateless).
 
 The beacon also drives zero-config discovery: the coordinator scans ranked
-line-in candidates (~5s dwell) until a beacon arrives, audits the top-ranked
-jack before locking (chirps bleed across the Cubilux's MIC IN/Line IN), and
-tracks freshness (stale after ~6s; rescan after ~15s more). Serial presence
+line-in candidates until a beacon arrives, audits the top-ranked jack
+before locking (chirps bleed across the Cubilux's MIC IN/Line IN), and
+tracks freshness (stale after ~6s; rescan after ~15s more). The 7s dwell
+fits worst-case pilot acquisition at ANY beacon phase (spin-up + up to one
+full period waiting + two more periods to lock), and an acquisition hold
+extends it while provisional beacons are arriving — the scan never rotates
+away one beacon short of a lock. The level a lock settles at is remembered
+across backend and app restarts (seeded into each fresh detector), so a
+wake-from-sleep usually fast re-locks on a single beacon. Serial presence
 always preempts audio. Beacons do not prevent the device's battery
 power-save: an idle ting sleeps after 5 minutes and reads as absent — honest.
 
@@ -109,8 +115,10 @@ separate typing worker converges the screen via keystroke edits
 bounded to the volatile region; external typing freezes it). Release
 finalizes with a 5s hard timeout; startup-wedged sessions are force-
 abandoned after 10s. Completed takes stack (cap 10): each green press erases
-exactly the characters of one more take (same app, ≤5min). Consecutive takes
-in the same app auto-join with a space.
+exactly the characters of one more take (same app, ≤5min, and only while
+nothing has moved the text since — a real keystroke or click after the
+take invalidates erase rather than backspacing over the user's own
+content). Consecutive takes in the same app auto-join with a space.
 
 ### Rewrite pass (`[rewrite]` in config, on by default)
 
@@ -129,8 +137,11 @@ to the filler-stripped text; a no-op applies nothing. The polish lands
 the first changed character, retype the rest — backspaces cannot reach
 past a common suffix, so no other diff shape is valid). The pending
 rewrite is cancelled by anything that moves the world: a new squeeze,
-erase, send, or app switch; the menu bar icon shows a blue dot while the
-model runs. Eligibility band: 4-150 words.
+erase, send, app switch, or ANY real keystroke or mouse click (a global
+input monitor watches for them; tingle's own synthetic events are tagged
+via CGEventSource userData and ignored). The menu bar icon shows a blue
+dot while the model runs. Eligibility band: 4-1000 words (the model's
+4,096-token context window).
 
 ## Configuration
 

@@ -12,17 +12,29 @@ import Foundation
 ///
 /// The caller supplies time and the candidate count; this type performs no
 /// I/O so the transitions are unit-testable.
-struct BeaconScanner: Equatable {
-    struct Timing: Equatable {
-        /// Listen time per candidate (beacon period 2s ×2 + margin).
-        var dwellSeconds: TimeInterval = 5
+public struct BeaconScanner: Equatable {
+    public struct Timing: Equatable {
+        /// Listen time per candidate. Must exceed WORST-CASE acquisition:
+        /// engine spin-up (~0.5s) + up to one full beacon period waiting
+        /// for the first beacon (2s) + two more periods for the 3-beacon
+        /// pilot lock (4s) + decode margin. The old 5s dwell (6s effective
+        /// on the 2s driver poll) was commensurate with the 2s beacon
+        /// period, so an unlucky phase repeated identically every rotation
+        /// — wake-from-sleep took 30-60s while the ting's clock drift
+        /// slowly walked the phase (observed 2026-07-12).
+        public var dwellSeconds: TimeInterval = 7
+        /// Extra dwell granted while a pilot acquisition is in progress
+        /// (provisional beacons arriving): never rotate away mid-lock.
+        public var acquisitionHoldSeconds: TimeInterval = 8
         /// Locked → stale after this long without a beacon/event (3 missed).
-        var staleSeconds: TimeInterval = 6
+        public var staleSeconds: TimeInterval = 6
         /// Stale for this much longer → resume scanning.
-        var rescanSeconds: TimeInterval = 15
+        public var rescanSeconds: TimeInterval = 15
+
+        public init() {}
     }
 
-    enum Phase: Equatable {
+    public enum Phase: Equatable {
         case scanning(index: Int, since: TimeInterval)
         /// A beacon arrived on a lower-ranked candidate. Chirps bleed across
         /// jacks on multi-input boxes (Cubilux MIC IN hears Line IN's tones),
@@ -32,7 +44,7 @@ struct BeaconScanner: Equatable {
         case locked(lastHeard: TimeInterval)
     }
 
-    enum Decision: Equatable {
+    public enum Decision: Equatable {
         case stay
         /// Move the audio backend to the candidate at this index.
         case switchCandidate(index: Int)
@@ -40,22 +52,22 @@ struct BeaconScanner: Equatable {
         case resumeScan
     }
 
-    let timing: Timing
-    private(set) var phase: Phase
+    public let timing: Timing
+    public private(set) var phase: Phase
 
-    init(timing: Timing = Timing(), now: TimeInterval) {
+    public init(timing: Timing = Timing(), now: TimeInterval) {
         self.timing = timing
         self.phase = .scanning(index: 0, since: now)
     }
 
-    var isLocked: Bool {
+    public var isLocked: Bool {
         if case .locked = phase { return true }
         return false
     }
 
     /// While scanning/verifying, the candidate index currently being
     /// listened to (clamped to the live candidate list).
-    func scanIndex(candidateCount: Int) -> Int? {
+    public func scanIndex(candidateCount: Int) -> Int? {
         guard candidateCount > 0 else { return nil }
         switch phase {
         case .scanning(let index, _): return min(index, candidateCount - 1)
@@ -64,19 +76,19 @@ struct BeaconScanner: Equatable {
         }
     }
 
-    var lastHeard: TimeInterval? {
+    public var lastHeard: TimeInterval? {
         guard case .locked(let lastHeard) = phase else { return nil }
         return lastHeard
     }
 
-    func isStale(now: TimeInterval) -> Bool {
+    public func isStale(now: TimeInterval) -> Bool {
         guard case .locked(let lastHeard) = phase else { return false }
         return now - lastHeard >= timing.staleSeconds
     }
 
     /// A beacon — or any decoded ting event — arrived on the current device.
     /// Returns a device switch when the hear is suspect (crossbleed check).
-    mutating func heard(now: TimeInterval, candidateCount: Int) -> Decision {
+    public mutating func heard(now: TimeInterval, candidateCount: Int) -> Decision {
         switch phase {
         case .scanning(let index, _) where index > 0 && candidateCount > 1:
             phase = .verifyingTop(fallbackIndex: index, since: now)
@@ -88,12 +100,15 @@ struct BeaconScanner: Equatable {
     }
 
     /// The device being scanned/locked disappeared; restart scanning now.
-    mutating func deviceLost(now: TimeInterval) {
+    public mutating func deviceLost(now: TimeInterval) {
         phase = .scanning(index: 0, since: now)
     }
 
     /// Periodic driver tick. Returns what the audio plumbing should do.
-    mutating func tick(now: TimeInterval, candidateCount: Int) -> Decision {
+    /// `acquiring` = the detector is mid-acquisition on the current device
+    /// (provisional beacons arriving) — extends the dwell so the scan
+    /// never rotates away one beacon short of a lock.
+    public mutating func tick(now: TimeInterval, candidateCount: Int, acquiring: Bool = false) -> Decision {
         switch phase {
         case .scanning(let index, let since):
             guard candidateCount > 0 else { return .stay }
@@ -102,7 +117,10 @@ struct BeaconScanner: Equatable {
                 phase = .scanning(index: 0, since: now)
                 return .switchCandidate(index: 0)
             }
-            if now - since >= timing.dwellSeconds {
+            let limit = acquiring
+                ? timing.dwellSeconds + timing.acquisitionHoldSeconds
+                : timing.dwellSeconds
+            if now - since >= limit {
                 let next = (index + 1) % candidateCount
                 phase = .scanning(index: next, since: now)
                 return .switchCandidate(index: next)

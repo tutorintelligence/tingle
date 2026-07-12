@@ -85,6 +85,9 @@ public struct SymbolDetector {
     // MARK: - Protocol/lock state
 
     private(set) public var locked = false
+    /// True while provisional beacons are actively arriving (pilot
+    /// acquisition in progress) — the beacon scanner extends its dwell.
+    public private(set) var acquiring = false
     private var provisionalBeacons: [(at: Double, levelDB: Double)] = []
     private var rememberedLevelDB: Double?
     private var beaconLevelEMA: Double?
@@ -301,9 +304,23 @@ public struct SymbolDetector {
             locked = false
             rememberedLevelDB = beaconLevelEMA
             provisionalBeacons.removeAll()
+            acquiring = false
             diagnosticsBuffer.append("beacon pilot lost — decoder unlocked")
         }
+        if acquiring, let lastProvisional = provisionalBeacons.last?.at, now - lastProvisional > 4.5 {
+            acquiring = false
+        }
         return []
+    }
+
+    /// The level a lock (or a lost lock) settled at — survives the detector
+    /// by being re-seeded into the next instance, so wake-from-sleep can
+    /// fast re-lock on a SINGLE beacon instead of the full 3-beacon
+    /// acquisition (device switches used to discard this memory).
+    public var levelMemoryDB: Double? { beaconLevelEMA ?? rememberedLevelDB }
+
+    public mutating func seedRememberedLevel(_ levelDB: Double) {
+        if rememberedLevelDB == nil { rememberedLevelDB = levelDB }
     }
 
     private mutating func userEvent(_ event: TingEvent, level: Double) -> [TingEvent] {
@@ -338,6 +355,7 @@ public struct SymbolDetector {
         }
         provisionalBeacons = provisionalBeacons.filter { abs(level - $0.levelDB) <= 6 && at - $0.at < 9.5 }
         provisionalBeacons.append((at, level))
+        acquiring = true
         if provisionalBeacons.count >= 3 {
             let last3 = provisionalBeacons.suffix(3).map(\.at)
             let i1 = last3[1] - last3[0], i2 = last3[2] - last3[1]
@@ -345,6 +363,7 @@ public struct SymbolDetector {
                 locked = true
                 beaconLevelEMA = provisionalBeacons.suffix(3).map(\.levelDB).reduce(0, +) / 3
                 provisionalBeacons.removeAll()
+                acquiring = false
                 noteBeacon(at: at)
                 diagnosticsBuffer.append("beacon pilot locked at \(String(format: "%.1f", beaconLevelEMA!))dB (periodic x3)")
                 return [event]

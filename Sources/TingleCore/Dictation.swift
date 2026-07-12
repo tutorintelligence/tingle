@@ -11,7 +11,7 @@ import os
 ///
 /// The speech stack requires macOS 26 (Tahoe); everything is availability-
 /// gated so the app still runs (sans dictation) on the macOS 13 target.
-final class DictationController {
+public final class DictationController {
     /// Menu status override; nil = not dictating. Delivered on the main queue.
     /// ("Preparing speech model…", "Dictating…", "Inserted N words")
     var onStatusChange: ((String?) -> Void)?
@@ -172,6 +172,14 @@ final class DictationController {
             flashStatus("Nothing recent to erase")
             return
         }
+        // Typing or a click since the take ended means the caret and the
+        // text have moved: backspacing characterCount chars would eat the
+        // user's own content. Refuse loudly instead of deleting blind.
+        guard !Self.eraseInvalidated(takeEndedAt: last.endedAt, lastContentMoveAt: lastContentMoveAt) else {
+            log.info("eraseDictation: text moved since the take; refusing")
+            flashStatus("Can't erase — text changed since the take")
+            return
+        }
         guard actionRunner.ensureAccessibility() else { return }
         DictationKeystrokes.post(.init(backspaces: last.characterCount, append: ""))
         log.info("erased last take (\(last.characterCount) characters, \(self.takeStack.count - 1) more on the stack)")
@@ -270,13 +278,29 @@ final class DictationController {
         }
     }
 
-    /// A keystroke/keyHold action is about to type while dictation is live:
-    /// the field is changing under the typer, so freeze what's on screen —
-    /// corrections must not backspace over it (the overwrite bug).
-    func externalTypingWillOccur() {
-        guard #available(macOS 26, *), let active = session as? DictationSession else { return }
-        active.freezeVolatile()
+    /// The on-screen text moved out from under us — real typing or a click
+    /// (via UserInputMonitor), or one of tingle's own keystroke actions.
+    /// Every deferred automatic edit stands down: the pending rewrite is
+    /// cancelled, the erase gesture refuses until the next take, and a
+    /// live session freezes its volatile region so corrections can't
+    /// backspace over foreign text.
+    private var lastContentMoveAt: Date?
+
+    func contentMoved() {
+        lastContentMoveAt = Date()
+        cancelPendingRewrite()
+        if #available(macOS 26, *), let active = session as? DictationSession {
+            active.freezeVolatile()
+        }
     }
+
+    /// Pure decision for the erase guard (unit-tested): a take is only
+    /// erasable while nothing has moved the text since it ended.
+    public static func eraseInvalidated(takeEndedAt: Date, lastContentMoveAt: Date?) -> Bool {
+        guard let moved = lastContentMoveAt else { return false }
+        return moved > takeEndedAt
+    }
+
 
     private func sessionFinished(wordCount: Int, characterCount: Int, lastCharacter: Character?, text: String) {
         session = nil
@@ -571,7 +595,7 @@ final class DictationSession {
         }
     }
 
-    /// See DictationController.externalTypingWillOccur().
+    /// See DictationController.contentMoved().
     func freezeVolatile() {
         typeQueue.async { [weak self] in self?.typer.freezeVolatile() }
     }
@@ -876,7 +900,7 @@ enum DictationKeystrokes {
 
     static func post(_ edit: TranscriptTyper.Edit) {
         guard !edit.isEmpty else { return }
-        let source = CGEventSource(stateID: .hidSystemState)
+        let source = SyntheticEvents.source()
 
         for _ in 0..<edit.backspaces {
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: backspaceKeyCode, keyDown: true),

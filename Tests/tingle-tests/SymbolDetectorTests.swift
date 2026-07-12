@@ -54,6 +54,25 @@ func runSymbolDetectorTests() {
     expectEqual(decode(prime()), [.beacon],
                 "decoder: three periodic beacon words lock; first two provisional")
 
+    // Fast re-lock: a detector seeded with the level a previous lock
+    // settled at locks on a SINGLE beacon — this memory must survive
+    // backend restarts or every wake pays the slow 3-beacon acquisition.
+    var harvest = SymbolDetector()
+    _ = harvest.process(samples: prime())
+    let harvestedLevel = harvest.levelMemoryDB
+    expect(harvestedLevel != nil, "decoder: lock leaves a level memory")
+    var seeded = SymbolDetector()
+    seeded.seedRememberedLevel(harvestedLevel ?? -7)
+    _ = seeded.process(samples: gap(0.5) + word(.beaconReleased) + gap(1))
+    expect(seeded.locked, "decoder: seeded level fast re-locks on one beacon")
+
+    // The acquiring flag drives the scanner's dwell hold: true after a
+    // provisional beacon, false once locked.
+    var partial = SymbolDetector()
+    _ = partial.process(samples: gap(0.5) + word(.beaconReleased) + gap(1))
+    expect(partial.acquiring, "decoder: provisional beacon raises acquiring")
+    expect(!harvest.acquiring, "decoder: lock clears acquiring")
+
     // Every message decodes. (beaconReleased word is FOUR IDENTICAL
     // symbols 29ms apart — exercises the peak-drop tracker.)
     expectEqual(user(prime() + word(.triggerDown) + gap(1)), [.triggerDown], "decoder: trigger down")

@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: DetectionCoordinator!
     private var dictation: DictationController!
     private var statusItemController: StatusItemController!
+    private let userInputMonitor = UserInputMonitor()
     private var permissions: PermissionsMonitor!
 
     private let log = Logger(subsystem: Log.subsystem, category: "app")
@@ -87,6 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissions = PermissionsMonitor()
         statusItemController = StatusItemController(
             configStore: configStore, coordinator: coordinator, permissions: permissions)
+        userInputMonitor.onUserInput = { [weak self] in
+            self?.dictation.contentMoved()
+        }
+        userInputMonitor.start()
         dictation.onRewriteActive = { [weak self] active in
             self?.statusItemController?.setRewriteActive(active)
         }
@@ -196,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // can't backspace over it (the overwrite bug).
         switch action {
         case .keystroke, .keyHold:
-            dictation.externalTypingWillOccur()
+            dictation.contentMoved()
         default:
             break
         }

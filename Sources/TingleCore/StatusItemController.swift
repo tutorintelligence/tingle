@@ -124,6 +124,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         viewDefaultsItem.target = self
         menu.addItem(viewDefaultsItem)
 
+        // One click -> a pasteable support report. Every field in it is a
+        // question we'd otherwise ask over Slack.
+        let diagnosticsItem = NSMenuItem(title: "Copy diagnostics", action: #selector(copyDiagnostics), keyEquivalent: "")
+        diagnosticsItem.target = self
+        menu.addItem(diagnosticsItem)
+
         // Version + updates are always visible (discoverability); the
         // check is only actionable in the installed .app — Sparkle cannot
         // update a bare dev binary.
@@ -549,6 +555,37 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openDefaultConfigFile() {
         NSWorkspace.shared.open(ConfigStore.defaultConfigURL)
+    }
+
+    @objc private func copyDiagnostics() {
+        setDictationStatus("Gathering diagnostics…")
+        let snapshot = Diagnostics.Snapshot(
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev",
+            buildMode: Bundle.main.bundleIdentifier == nil ? "dev binary" : "installed app",
+            macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            backendState: lastBackendState.menuDescription,
+            weakSignal: coordinator.weakSignal,
+            micGranted: permissions.mic == .granted,
+            accessibilityGranted: permissions.axTrusted,
+            rewriteModelAvailable: FoundationRewriteModel().isAvailable,
+            pinnedInputUID: PinnedInput.uid,
+            lastBeaconLevelDB: coordinator.lastKnownBeaconLevelDB,
+            micMode: Diagnostics.currentMicMode(),
+            inputDevices: AudioDeviceCatalog.systemInputDevices().map(\.name),
+            transitions: coordinator.recentTransitions,
+            configText: (try? String(contentsOf: ConfigStore.configURL, encoding: .utf8)) ?? "(unreadable)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let log = Diagnostics.recentPersistedLog()
+            let report = Diagnostics.report(snapshot, recentLog: log)
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(report, forType: .string)
+                self?.setDictationStatus("Diagnostics copied to clipboard")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    self?.setDictationStatus(nil)
+                }
+            }
+        }
     }
 
     // MARK: - Launch at Login
