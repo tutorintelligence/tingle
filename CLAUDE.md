@@ -120,6 +120,14 @@ dictation, or the device payload. Add a regression test with every bug fix.
   PermissionsMonitor owns the UX: "!" icon badge, fix-it menu items, launch
   prompts, and a tccutil-reset repair for the stale-Accessibility-row case.
 
+## Captured audio rule
+
+NEVER commit audio recorded from the ting (or any capture device)
+without Josh's explicit per-file approval — the ting is a microphone
+with passthrough, so "sensor data" recordings can carry his voice.
+Stage candidates in a folder, `open` it in Finder for him to inspect,
+and prefer hard FFT-masked (>15kHz-only) versions for fixtures.
+
 ## Contribution flow
 
 main is protected: squash-merge only, PRs required, CI (`test`) must pass.
