@@ -39,15 +39,27 @@ enum Flasher {
     }
 
     /// The device event engine shipped as main.py. Bundled via Package.swift
-    /// resources from Sources/tingle/Resources/tingle_main.py, which must be
-    /// kept byte-identical with the source of truth at device/tingle_main.py.
-    static func devicePayload() throws -> Data {
-        guard let url = Bundle.module.url(forResource: "tingle_main", withExtension: "py"),
-              let data = try? Data(contentsOf: url)
-        else {
-            throw FlasherError.payloadMissing
+    /// resources from Sources/TingleCore/Resources/tingle_main.py, which must
+    /// be kept byte-identical with the source of truth at device/tingle_main.py.
+    ///
+    /// Deliberately NOT Bundle.module: SwiftPM's generated accessor for
+    /// executable targets only checks the .app ROOT and the absolute build
+    /// directory baked in at compile time — and it fatalErrors when both
+    /// miss. A CI-built .app keeps the bundle in Contents/Resources and has
+    /// a nonexistent /Users/runner build path, so clicking Flash EP crashed
+    /// the whole app (2026-07-11). Resolve the bundle ourselves, gracefully.
+    public static func devicePayload() throws -> Data {
+        // resourceURL covers the installed .app (Contents/Resources);
+        // bundleURL covers the bare dev binary (.build/debug/).
+        for dir in [Bundle.main.resourceURL, Bundle.main.bundleURL].compactMap({ $0 }) {
+            let resourceBundle = dir.appendingPathComponent("tingle_TingleCore.bundle")
+            if let bundle = Bundle(url: resourceBundle),
+               let url = bundle.url(forResource: "tingle_main", withExtension: "py"),
+               let data = try? Data(contentsOf: url) {
+                return data
+            }
         }
-        return data
+        throw FlasherError.payloadMissing
     }
 
     static var isTingleiskMounted: Bool {
