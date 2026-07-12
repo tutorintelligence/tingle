@@ -35,7 +35,9 @@ enum BackendState: Equatable {
         case .tingDetected(let deviceName):
             return "ting on \(deviceName)"
         case .tingStale(_, let seconds):
-            return "ting asleep or off — squeeze the handle to wake (last heard \(seconds)s ago)"
+            return seconds < 0
+                ? "ting asleep or off — squeeze the handle to wake"
+                : "ting asleep or off — squeeze the handle to wake (last heard \(seconds)s ago)"
         case .listeningAudio(let deviceName):
             return "Listening on \(deviceName) — no ting heard"
         case .connectedSerial:
@@ -190,6 +192,9 @@ final class DetectionCoordinator {
         case .stay:
             break
         case .switchCandidate(let index):
+            if candidates[index].uid == currentAudioDeviceUID, audio != nil {
+                break   // already there — keep the capture running
+            }
             log.info("beacon scan: trying \(candidates[index].name, privacy: .public)")
             stopAudio()
             startAudioBackend(uid: candidates[index].uid)
@@ -357,6 +362,10 @@ final class DetectionCoordinator {
                 } else {
                     state = .tingDetected(deviceName: audio.deviceName)
                 }
+            } else if scanner.isCamping {
+                // Camped on the last-locked jack waiting for wake beacons:
+                // the ting is asleep, not lost — say so.
+                state = .tingStale(deviceName: audio.deviceName, secondsSinceHeard: -1)
             } else {
                 state = .searching(deviceName: audio.deviceName)
             }

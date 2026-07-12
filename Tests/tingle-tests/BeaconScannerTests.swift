@@ -77,4 +77,64 @@ func runBeaconScannerTests() {
         expect(lockedAt - wakeAt <= 2 * timing.dwellSeconds + 8,
                "scanner: worst-phase wake locks within one rotation (took \(lockedAt - wakeAt)s from wake)")
     }
+
+    runCampingTests()
+}
+
+/// Camping: when a lock goes quiet (ting asleep), sit on the locked device
+/// with capture running instead of rotating — rotation blinked the macOS
+/// mic indicator every dwell, all night (Josh, 2026-07-12).
+private func runCampingTests() {
+    let timing = BeaconScanner.Timing()
+    let quiet = timing.staleSeconds + timing.rescanSeconds
+
+    // Lock on device 0, go quiet: camps there instead of rescanning.
+    var s = BeaconScanner(now: 0)
+    _ = s.heard(now: 1, candidateCount: 2)
+    expect(s.isLocked, "camp: locked on first heard")
+    expectEqual(s.tick(now: 1 + quiet + 1, candidateCount: 2), .stay,
+                "camp: quiet lock camps with NO device switch")
+    expect(s.isCamping, "camp: camping after quiet lock")
+    expectEqual(s.scanIndex(candidateCount: 2), 0, "camp: stays on the locked device")
+
+    // The icon-solid property: an hour of camping produces zero switches
+    // until the sweep interval elapses, and every sweep is bounded.
+    var now = 1 + quiet + 1
+    var switches = 0
+    let start = now
+    while now < start + 3600 {
+        now += 2
+        if case .switchCandidate = s.tick(now: now, candidateCount: 2) { switches += 1 }
+        // re-camp instantly counts through; heard() not called (still asleep)
+    }
+    let sweeps = Int(3600 / timing.campSweepSeconds)
+    // Each 2-candidate sweep = out to the other jack + back home.
+    expect(switches <= sweeps * 2 + 2,
+           "camp: an hour asleep causes at most \(sweeps) sweeps (\(switches) switches)")
+    expect(switches >= 2, "camp: the jack-swap escape hatch does sweep")
+
+    // A wake beacon during camping locks immediately, no rotation.
+    s = BeaconScanner(now: 0)
+    _ = s.heard(now: 1, candidateCount: 2)
+    _ = s.tick(now: 1 + quiet + 1, candidateCount: 2)
+    expect(s.isCamping, "camp: camping before wake")
+    expectEqual(s.heard(now: 1 + quiet + 5, candidateCount: 2), .stay,
+                "camp: wake beacon locks in place")
+    expect(s.isLocked, "camp: locked after wake beacon")
+
+    // Never-locked quiet start still uses the rotation (no camp target).
+    s = BeaconScanner(now: 0)
+    var sawRotation = false
+    for t in stride(from: 2.0, to: 40, by: 2) {
+        if case .switchCandidate = s.tick(now: t, candidateCount: 2) { sawRotation = true }
+    }
+    expect(sawRotation, "camp: initial discovery still rotates")
+
+    // A sweep hearing beacons on a lower-ranked jack still runs the
+    // crossbleed audit before locking.
+    s = BeaconScanner(now: 0)
+    // lock on index 1 via verify-timeout: scan 0 -> rotate to 1 -> heard.
+    _ = s.tick(now: timing.dwellSeconds + 0.1, candidateCount: 2)   // -> index 1
+    expectEqual(s.heard(now: timing.dwellSeconds + 2, candidateCount: 2),
+                .switchCandidate(index: 0), "camp: hear on low rank audits top")
 }

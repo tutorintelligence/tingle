@@ -4,11 +4,18 @@ import Foundation
 /// input (device beacon = chirp pair (1,3) / "EVT beacon", every ~2s while
 /// its chirp queue is idle).
 ///
-/// Scanning: dwell on each ranked candidate device for `dwellSeconds` (two
-/// beacon periods + margin) until a beacon (or any decoded event) arrives,
-/// then lock. Locked: track freshness — no beacon for `staleSeconds` (3
-/// missed) shows "ting not detected"; after `rescanSeconds` more, resume
-/// scanning from the top candidate. Any decoded event counts as liveness.
+/// Scanning: dwell on each ranked candidate device for `dwellSeconds`
+/// until a beacon (or any decoded event) arrives, then lock. Locked: track
+/// freshness — no beacon for `staleSeconds` (3 missed) shows "ting not
+/// detected". Any decoded event counts as liveness.
+///
+/// When a lock goes quiet for good (the ting slept), the scan CAMPS on the
+/// device it was locked to instead of rotating: the ting wakes on the jack
+/// it slept on, camping keeps one capture running continuously (rotation
+/// made macOS's mic indicator flicker every dwell, all night), and the
+/// first wake beacon lands on a device that is already listening. A rare
+/// sweep of the other candidates (`campSweepSeconds`) covers the ting
+/// having been re-plugged to a different jack while asleep.
 ///
 /// The caller supplies time and the candidate count; this type performs no
 /// I/O so the transitions are unit-testable.
@@ -28,8 +35,14 @@ public struct BeaconScanner: Equatable {
         public var acquisitionHoldSeconds: TimeInterval = 8
         /// Locked → stale after this long without a beacon/event (3 missed).
         public var staleSeconds: TimeInterval = 6
-        /// Stale for this much longer → resume scanning.
+        /// Stale for this much longer → give up on the lock (camp or scan).
         public var rescanSeconds: TimeInterval = 15
+        /// While camping on the last-locked device, sweep the OTHER
+        /// candidates once per this interval — the escape hatch for a
+        /// ting moved to a different jack while asleep. Long on purpose:
+        /// every sweep restarts capture engines and blinks the mic
+        /// indicator.
+        public var campSweepSeconds: TimeInterval = 300
 
         public init() {}
     }
@@ -42,6 +55,12 @@ public struct BeaconScanner: Equatable {
         /// dwell; hear it there → lock the top, silence → fall back.
         case verifyingTop(fallbackIndex: Int, since: TimeInterval)
         case locked(lastHeard: TimeInterval)
+        /// Lock went quiet (ting asleep): sit on the device it was locked
+        /// to with capture running continuously, waiting for wake beacons.
+        case camping(index: Int, lastSweepAt: TimeInterval)
+        /// Mid-camp sweep: one dwell on each other candidate, then back
+        /// to camp. `remaining` counts candidates left to visit.
+        case sweeping(index: Int, since: TimeInterval, campIndex: Int, remaining: Int)
     }
 
     public enum Decision: Equatable {
@@ -65,6 +84,11 @@ public struct BeaconScanner: Equatable {
         return false
     }
 
+    public var isCamping: Bool {
+        if case .camping = phase { return true }
+        return false
+    }
+
     /// While scanning/verifying, the candidate index currently being
     /// listened to (clamped to the live candidate list).
     public func scanIndex(candidateCount: Int) -> Int? {
@@ -73,6 +97,8 @@ public struct BeaconScanner: Equatable {
         case .scanning(let index, _): return min(index, candidateCount - 1)
         case .verifyingTop: return 0
         case .locked: return nil
+        case .camping(let index, _): return min(index, candidateCount - 1)
+        case .sweeping(let index, _, _, _): return min(index, candidateCount - 1)
         }
     }
 
@@ -93,7 +119,18 @@ public struct BeaconScanner: Equatable {
         case .scanning(let index, _) where index > 0 && candidateCount > 1:
             phase = .verifyingTop(fallbackIndex: index, since: now)
             return .switchCandidate(index: 0)
-        case .scanning, .verifyingTop, .locked:
+        case .sweeping(let index, _, _, _) where index > 0 && candidateCount > 1:
+            phase = .verifyingTop(fallbackIndex: index, since: now)
+            return .switchCandidate(index: 0)
+        case .scanning(let index, _), .sweeping(let index, _, _, _), .camping(let index, _):
+            lastLockedIndex = index
+            phase = .locked(lastHeard: now)
+            return .stay
+        case .verifyingTop:
+            lastLockedIndex = 0
+            phase = .locked(lastHeard: now)
+            return .stay
+        case .locked:
             phase = .locked(lastHeard: now)
             return .stay
         }
@@ -130,16 +167,62 @@ public struct BeaconScanner: Equatable {
             if now - since >= timing.dwellSeconds {
                 // Top candidate stayed silent: the original hear was real.
                 let index = min(fallbackIndex, max(candidateCount - 1, 0))
+                lastLockedIndex = index
                 phase = .locked(lastHeard: now)
                 return .switchCandidate(index: index)
             }
             return .stay
         case .locked(let lastHeard):
             if now - lastHeard >= timing.staleSeconds + timing.rescanSeconds {
+                // The ting slept. Camp on the device we were locked to —
+                // the wake beacon arrives on the jack it slept on, and a
+                // continuous capture never blinks the mic indicator. The
+                // caller keeps the backend where it is (scanIndex is
+                // unchanged), so no engine teardown happens at all.
+                if let index = lastLockedIndex, index < candidateCount {
+                    phase = .camping(index: index, lastSweepAt: now)
+                    return .stay
+                }
                 phase = .scanning(index: 0, since: now)
                 return .resumeScan
             }
             return .stay
+        case .camping(let index, let lastSweepAt):
+            guard candidateCount > 0 else { return .stay }
+            if index >= candidateCount {
+                phase = .scanning(index: 0, since: now)
+                return .switchCandidate(index: 0)
+            }
+            if candidateCount > 1, now - lastSweepAt >= timing.campSweepSeconds {
+                let next = (index + 1) % candidateCount
+                phase = .sweeping(index: next, since: now, campIndex: index,
+                                  remaining: candidateCount - 1)
+                return .switchCandidate(index: next)
+            }
+            return .stay
+        case .sweeping(let index, let since, let campIndex, let remaining):
+            guard candidateCount > 0 else { return .stay }
+            let limit = acquiring
+                ? timing.dwellSeconds + timing.acquisitionHoldSeconds
+                : timing.dwellSeconds
+            if now - since >= limit {
+                if remaining <= 1 {
+                    // Sweep done, nothing heard anywhere else: back to camp.
+                    let home = min(campIndex, candidateCount - 1)
+                    phase = .camping(index: home, lastSweepAt: now)
+                    return .switchCandidate(index: home)
+                }
+                var next = (index + 1) % candidateCount
+                if next == campIndex { next = (next + 1) % candidateCount }
+                phase = .sweeping(index: next, since: now, campIndex: campIndex,
+                                  remaining: remaining - 1)
+                return .switchCandidate(index: next)
+            }
+            return .stay
         }
     }
+
+    /// The index the most recent lock was achieved on — where camping
+    /// returns to when the lock goes quiet.
+    private var lastLockedIndex: Int?
 }
