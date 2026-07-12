@@ -445,7 +445,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             USB port.
             4.  A disk named TING BOOT appears and tingle does the rest — \
             you can let go when this card closes.
-            """)
+            """, showsOK: false)
         setFirmwareStatus("Firmware upgrade: starting…")
         FirmwareUpgrader.upgrade(
             frequencies: configStore.config.toneFrequencies
@@ -458,7 +458,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 self?.firmwareInstructions?.close()
                 self?.firmwareInstructions = nil
                 self?.flashProgress?.close()
-                self?.flashProgress = FloatingAlert.show(title: "Upgrading firmware", text: step)
+                self?.flashProgress = FloatingAlert.show(title: "Upgrading firmware", text: step, showsOK: false)
             } else {
                 self?.flashProgress?.update(text: step)
             }
@@ -493,7 +493,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func runFlasherOperation(_ operation: Flasher.Operation, title: String) {
         setFlashStatus("\(title): starting…")
         flashProgress?.close()
-        flashProgress = FloatingAlert.show(title: title, text: "Starting…")
+        flashProgress = FloatingAlert.show(title: title, text: "Starting…", showsOK: false)
         Flasher.run(operation) { [weak self] step in
             self?.setFlashStatus(step)
             self?.flashProgress?.update(text: step)
