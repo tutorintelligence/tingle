@@ -103,7 +103,7 @@ public struct GoertzelDetector {
     private var beaconIntervalWindows: Double?
     /// EMA of burst detection margins (dB over the strictest criterion);
     /// chronically low = the user should raise the ting's volume knob.
-    private(set) var signalMarginDB: Double?
+    public private(set) var signalMarginDB: Double?
 
     private struct ToneState {
         var hitStreak = 0
@@ -116,6 +116,15 @@ public struct GoertzelDetector {
         /// Set when this tone's current activation is a beacon's second
         /// burst: its end must be ignored rather than becoming pending.
         var suppressNextBurstEnd = false
+        /// Last window in which a guard bin (not the target) was hot for
+        /// this tone — the signature of a tone MOVING through the band.
+        var lastGuardHotWindow = -1000
+        /// Consecutive guard-hot windows: a glide sustains guard energy;
+        /// a noise spike lasts one window and must not arm the veto.
+        var guardHotStreak = 0
+        /// Burst started with recent guard activity: program audio gliding
+        /// into the bin, not a chirp appearing from silence.
+        var taintedByApproach = false
     }
 
     public init(configuration: Configuration) {
@@ -138,7 +147,7 @@ public struct GoertzelDetector {
     /// boundaries — no per-window cost.
     private var diagnostics: [String] = []
 
-    mutating func drainDiagnostics() -> [String] {
+    public mutating func drainDiagnostics() -> [String] {
         defer { diagnostics.removeAll(keepingCapacity: true) }
         return diagnostics
     }
@@ -229,6 +238,20 @@ public struct GoertzelDetector {
                 // Schmitt trigger: strict to start, lenient to sustain.
                 let bar = tones[index].isOn ? configuration.sustainDB : configuration.thresholdDB
                 hits[index] = margin >= bar
+                // Guard bins DOMINATING the target = energy centered off-bin
+                // moving through the neighborhood (program-audio glide). A
+                // real tone always beats its own sidelobe leakage, and mere
+                // noise flutter fails the 6dB dominance test.
+                if !hits[index],
+                   max(guardLow, guardHigh) >= medianLevel + configuration.thresholdDB,
+                   max(guardLow, guardHigh) >= target + 6 {
+                    tones[index].guardHotStreak += 1
+                    if tones[index].guardHotStreak >= 2 {
+                        tones[index].lastGuardHotWindow = windowClock
+                    }
+                } else {
+                    tones[index].guardHotStreak = 0
+                }
                 if hits[index] {
                     // Track detection health (EMA): chronically thin margins
                     // mean the volume knob is too low for reliable decode.
@@ -270,6 +293,7 @@ public struct GoertzelDetector {
             // remainder of the burst is absorbed by refractory).
             state.isOn = true
             state.onStartWindow = now - configuration.onWindows + 1
+            state.taintedByApproach = now - state.lastGuardHotWindow <= 4
             if let pending = pendingBurst {
                 pendingBurst = nil
                 let event: TingEvent
@@ -328,6 +352,12 @@ public struct GoertzelDetector {
                 diagnostics.append("burst tone=\(index + 1) \(duration)w rejected (too long, max \(configuration.maxBurstWindows)w — program audio?)")
             } else if pendingBurst != nil {
                 diagnostics.append("burst tone=\(index + 1) \(duration)w dropped (pending burst already waiting)")
+            } else if state.taintedByApproach {
+                // A glide that entered via the guard bins can complete a
+                // "burst" but must never become pending (lone bursts run
+                // actions). Chirp SECOND tones are classified at onset and
+                // never reach here, so real pairs are unaffected.
+                diagnostics.append("burst tone=\(index + 1) \(duration)w rejected (moving tone — guards hot before onset)")
             } else {
                 let avgMargin = state.marginCount > 0 ? state.marginSum / Double(state.marginCount) : 0
                 diagnostics.append("burst tone=\(index + 1) \(duration)w -> pending")
