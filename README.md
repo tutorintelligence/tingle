@@ -48,13 +48,14 @@ volume knob under the ting's lid up to around halfway.
 brew install --cask tutorintelligence/tap/tingle
 ```
 
-tingle isn't code-signed yet (Apple Developer enrollment in progress), so
-the cask clears macOS's quarantine flag after install — otherwise
-Gatekeeper would block the app with "Apple could not verify tingle is
-free of malware". If you'd rather keep the flag, install the app from
-source instead and approve it under System Settings → Privacy & Security
-→ "Open Anyway". Once signing lands this note disappears and updates
-keep permissions intact.
+tingle isn't code-signed yet (Apple Developer enrollment in progress).
+macOS tags downloaded apps with a quarantine flag so Gatekeeper can vet
+them on first launch — and unsigned apps fail that check with "Apple
+could not verify tingle is free of malware". The cask therefore removes
+the quarantine flag after install. If you'd rather keep Gatekeeper in
+the loop, build from source below instead, then approve the app under
+System Settings → Privacy & Security → "Open Anyway". Once signing
+lands, none of this applies.
 
 ### Install from source
 
@@ -97,6 +98,8 @@ tingle finds whichever line-in the ting is plugged into by listening for
 its heartbeat.
 
 ## Default controls
+
+<p align="center"><img src="docs/images/controls.svg" alt="Annotated ting: squeeze the handle to dictate, orange sends, green erases the last take, white summons your agent" width="760"></p>
 
 | Input | Action |
 |---|---|
