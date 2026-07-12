@@ -378,9 +378,21 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let available = Flasher.isTingleiskMounted && !isFlashing
         flashItem.isEnabled = available
         restoreItem.isEnabled = available
-        // The firmware flow starts with a download and a guided re-plug,
-        // so it doesn't need TINGDISK up front — only mutual exclusion.
-        firmwareItem.isEnabled = !isFlashing
+        // Firmware: show what we know. tingle can't read the running
+        // version off the device (USB reports only "1.00"), so the source
+        // of truth is the version this app last flashed.
+        if !isFlashing {
+            let flashed = UserDefaults.standard.string(forKey: "lastFlashedFirmware")
+            if flashed == FirmwareUpgrader.version {
+                firmwareItem.title = "ting firmware \(FirmwareUpgrader.version) (latest)"
+                firmwareItem.isEnabled = false
+            } else {
+                firmwareItem.title = "Upgrade ting firmware to \(FirmwareUpgrader.version)…"
+                firmwareItem.isEnabled = true
+            }
+        } else {
+            firmwareItem.isEnabled = false
+        }
     }
 
     @objc private func flashEP() {
@@ -407,14 +419,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             self.updateTingleiskItems()
             switch result {
             case .success(let message):
-                let alert = NSAlert()
-                alert.alertStyle = .informational
-                alert.messageText = "Firmware upgrade complete"
-                alert.informativeText = message
-                    + "\n\nNow power-cycle the ting: press the small button above "
-                    + "the USB-C port, then push the handle to start it."
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
+                FloatingAlert.show(
+                    title: "Firmware upgrade complete",
+                    text: message
+                        + "\n\nNow power-cycle the ting: press the small button above "
+                        + "the USB-C port, then push the handle to start it.")
             case .failure(let error):
                 self.log.error("Firmware upgrade failed: \(String(describing: error))")
                 self.presentError("Firmware upgrade failed", error)
@@ -436,14 +445,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             self.updateTingleiskItems()
             switch result {
             case .success(let message):
-                let alert = NSAlert()
-                alert.alertStyle = .informational
-                alert.messageText = "\(title) complete"
-                alert.informativeText = message
-                    + "\n\nNow power-cycle the ting: press the small button above "
-                    + "the USB-C port, then push the handle to start it."
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
+                FloatingAlert.show(
+                    title: "\(title) complete",
+                    text: message
+                        + "\n\nNow power-cycle the ting: press the small button above "
+                        + "the USB-C port, then push the handle to start it.")
             case .failure(let error):
                 self.log.error("\(title, privacy: .public) failed: \(String(describing: error))")
                 self.presentError("\(title) failed", error)
@@ -452,12 +458,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func presentError(_ title: String, _ error: Error) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = title
-        alert.informativeText = error.localizedDescription
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        FloatingAlert.show(title: title, text: error.localizedDescription)
     }
 
     // MARK: - Config file
@@ -508,13 +509,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         } catch {
             log.error("SMAppService register/unregister failed: \(String(describing: error))")
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.messageText = "Launch at Login unavailable"
-            alert.informativeText = "Launch at Login requires tingle to run as a bundled .app "
-                + "(it is currently running as a bare development binary).\n\n\(error.localizedDescription)"
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
+            FloatingAlert.show(
+                title: "Launch at Login unavailable",
+                text: "Launch at Login requires tingle to run as a bundled .app "
+                    + "(it is currently running as a bare development binary).\n\n\(error.localizedDescription)")
         }
         updateLaunchAtLoginState()
     }

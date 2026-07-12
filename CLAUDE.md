@@ -57,6 +57,13 @@ dictation, or the device payload. Add a regression test with every bug fix.
   (falls back to stock, writes /fat/tingle_crash.log). Tests must call
   `_tingle_cb` directly to surface errors; check the crash log on-device
   when the engine goes silent.
+- Firmware update ritual (TE readme, implemented by "Upgrade ting
+  firmware…"): lower lid off, USB attached, HOLD the handle the whole
+  time, and while holding, DOUBLE-CLICK the small button above the USB
+  port -> "TING BOOT" volume appears; drop the .uf2 there. NOT the
+  power-ritual button dance.
+- Never present NSAlert.runModal() — a modal session parks the main run
+  loop and freezes dictation/serial/menu while open. Use FloatingAlert.
 - Serial REPL access (`/dev/cu.usbmodemEPTXP*`, 115200): `\r\x03\x03`
   grabs the REPL. Never send Ctrl+D (soft reset re-enumerates USB; a
   battery-less unit stays down until the power ritual). tingle holds the

@@ -55,14 +55,11 @@ final class DictationController {
             log.error("dictate action requires macOS 26 (SpeechAnalyzer)")
             if !warnedUnsupportedOS {
                 warnedUnsupportedOS = true
-                let alert = NSAlert()
-                alert.alertStyle = .informational
-                alert.messageText = "Dictation requires macOS 26"
-                alert.informativeText = "The \"dictate\" action uses Apple's SpeechAnalyzer, "
-                    + "which is available on macOS 26 (Tahoe) and later. "
-                    + "Map triggerDown to a keyHold/keystroke/shell action instead."
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
+                FloatingAlert.show(
+                    title: "Dictation requires macOS 26",
+                    text: "The \"dictate\" action uses Apple's SpeechAnalyzer, "
+                        + "which is available on macOS 26 (Tahoe) and later. "
+                        + "Map triggerDown to a keyHold/keystroke/shell action instead.")
             }
             return
         }
