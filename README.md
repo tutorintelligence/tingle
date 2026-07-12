@@ -12,9 +12,10 @@ the mic, say what you want, put it down.
 
 Under the hood, a tiny MicroPython event engine installs onto the ting's own
 disk in one click (no firmware modification, fully reversible). Button
-presses reach your Mac instantly over USB, or — when the ting is untethered
-on batteries — over an inaudible ultrasonic chirp protocol on the audio
-cable. You never think about any of that; you just squeeze and talk.
+presses reach your Mac instantly over USB, or — with no USB attached, the
+ting on batteries — over an inaudible ultrasonic chirp protocol on the
+3.5mm audio cable. You never think about any of that; you just squeeze
+and talk.
 
 ## Requirements
 
@@ -108,28 +109,28 @@ its heartbeat.
 | green button | erase the last dictated take (repeat for earlier takes) |
 | white button | summon your agent — brings the first running AI coding app (Claude, Codex, Cursor, iTerm2, Terminal) to the front |
 
-Every one of these is just a default. tingle is configurable by design: the
-whole control scheme lives in the TOML file below, and any behavior — the
-summon list, what green erases, what orange sends, the dictation vocabulary —
-is yours to change.
+Every one of these is just a default. tingle is configurable by design —
+the summon list, what each button does, the dictation vocabulary, the
+rewrite pass — but the defaults are meant to be good enough that most
+people never open the config.
 
 ## Configuration
 
-Everything lives in one literate TOML file —
-`~/Library/Application Support/tingle/config.toml` ("Edit config…" in the
-menu) — which documents itself and live-reloads on save:
+Two files in `~/Library/Application Support/tingle/`:
+`default-config.toml` holds every option, documented, and is refreshed by
+the app on every launch — it's the reference, so new options and new
+built-in vocabulary arrive with updates. Your own `config.toml` ("Edit
+config…" in the menu) contains only what you change: copy any key over,
+edit it, save — it wins over the default and reloads live.
 
 ```toml
-vocabulary = ["Claude", "Codex", "kubectl"]   # bias recognition toward your jargon
+extraVocabulary = ["Metabase", "kubectl"]     # your jargon, added onto the built-in list
 
 [replacements]                                # fix what biasing can't
 "Tamil" = "TOML"
 
-[mappings]
-triggerDown = { type = "dictate" }
-fxChange    = { type = "keystroke", key = "return" }
-modeChange  = { type = "eraseDictation" }
-mode1       = { type = "shell", command = """
+[mappings]                                    # merges per key with the defaults
+mode1 = { type = "shell", command = """
 open -a "Claude"                              # multiline scripts welcome
 """ }
 ```
@@ -141,8 +142,8 @@ slots (`mode1`–`mode4`), selected by the ting's green mode LED.
 Dictation uses Apple's on-device speech stack (macOS 26+). Everything else
 works on macOS 13+.
 
-With Apple Intelligence available, an optional `[rewrite]` section enables
-an on-device LLM polish of each take a moment after you release: fillers
+With Apple Intelligence available, an on-device LLM polishes each take a
+moment after you release (on by default; `[rewrite]` in the config): fillers
 gone, punctuation fixed, your jargon corrected — all locally, nothing
 leaves the Mac, and it never touches your words' meaning (degenerate model
 output is rejected and your original text stays).
@@ -151,8 +152,8 @@ output is rejected and your original text stays).
 
 The ting executes user Python from its USB disk at boot. tingle ships an
 event engine that chains the stock firmware behavior, then reports button
-and trigger events as serial lines (docked) and as ultrasonic codewords
-(wireless): every event is four 25ms chirp symbols carrying an
+and trigger events as serial lines (over USB) and as ultrasonic codewords
+(over the 3.5mm audio cable): every event is four 25ms chirp symbols carrying an
 error-correcting code, matched-filter decoded on the Mac — a corrupted
 symbol self-corrects, and noise can never turn one button into another.
 A state-carrying heartbeat every 2 seconds acts as a pilot signal: it

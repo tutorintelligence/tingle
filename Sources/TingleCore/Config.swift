@@ -97,12 +97,12 @@ extension TingAction: Codable {
 /// Every bool maps to a fixed prompt fragment; `customInstructions` is the
 /// only freeform field and is appended last. All inert unless `enabled`.
 public struct RewriteConfig: Decodable, Equatable {
-    public var enabled = false
+    public var enabled = true
     public var removeFillers = true
     public var fixPunctuation = true
     public var fixGrammar = false
     public var correctVocabulary = true
-    public var technicalFormatting = false
+    public var technicalFormatting = true
     public var customInstructions = ""
 
     public init() {}
@@ -114,12 +114,12 @@ public struct RewriteConfig: Decodable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         removeFillers = try c.decodeIfPresent(Bool.self, forKey: .removeFillers) ?? true
         fixPunctuation = try c.decodeIfPresent(Bool.self, forKey: .fixPunctuation) ?? true
         fixGrammar = try c.decodeIfPresent(Bool.self, forKey: .fixGrammar) ?? false
         correctVocabulary = try c.decodeIfPresent(Bool.self, forKey: .correctVocabulary) ?? true
-        technicalFormatting = try c.decodeIfPresent(Bool.self, forKey: .technicalFormatting) ?? false
+        technicalFormatting = try c.decodeIfPresent(Bool.self, forKey: .technicalFormatting) ?? true
         customInstructions = try c.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
     }
 }
@@ -129,7 +129,17 @@ public struct TingConfig: Decodable {
     public var toneFrequencies: [Double]
     /// Words/phrases biasing dictation recognition (names, jargon) via
     /// AnalysisContext.contextualStrings. Cheap, applied per-session.
+    /// `vocabulary` is the curated built-in list (from the defaults file);
+    /// `extraVocabulary` is the user's own additions. Two keys instead of
+    /// merge magic: overriding either is plain per-key precedence.
     public var vocabulary: [String]
+    public var extraVocabulary: [String]
+
+    /// What consumers use: built-in plus user words, deduped in order.
+    public var effectiveVocabulary: [String] {
+        var seen = Set<String>()
+        return (vocabulary + extraVocabulary).filter { seen.insert($0).inserted }
+    }
     /// "mode1"…"mode4" (white per green mode), "modeChange" (green),
     /// "fxChange" (orange), "triggerDown"/"triggerUp" (handle).
     public var mappings: [String: TingAction]
@@ -140,63 +150,34 @@ public struct TingConfig: Decodable {
     /// Post-dictation LLM rewrite pass.
     public var rewrite: RewriteConfig
 
-    /// The default white-button action: bring the first running AI coding
-    /// app to the front, ready to dictate into.
-    static let summonAgentScript = """
-for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
-  if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
-    osascript - "$app" <<'APPLESCRIPT'
-on run argv
-  set appName to item 1 of argv
-  tell application appName to activate
-  delay 0.3
-  tell application "System Events" to tell process appName
-    try
-      set {wx, wy} to position of window 1
-      set {ww, wh} to size of window 1
-      click at {wx + (ww / 2), wy + (wh * 0.9)}
-    end try
-  end tell
-end run
-APPLESCRIPT
-    exit 0
-  fi
-done
-"""
-
-    static let `default` = TingConfig(
-        toneFrequencies: [17500, 18000, 18500, 19000],
-        vocabulary: ConfigStore.defaultVocabulary,
-        mappings: [
-            // Ergonomic defaults: squeeze = dictate, orange = enter (submit),
-            // green = scrap the last take. White is unmapped out of the box.
-            "modeChange": .eraseDictation,
-            "fxChange": .keystroke(key: "return", modifiers: []),
-            "triggerDown": .dictate,
-            "white": .shell(command: summonAgentScript),
-        ],
-        replacements: ["Tamil": "TOML", "clawed": "Claude", "Clawed": "Claude"]
-    )
+    /// The defaults document is the single source of truth: `default` is
+    /// its parse (the bare-struct fallback below can only be reached if
+    /// the embedded template is broken, which CI rejects).
+    public static let `default` = (try? TingConfig.parse(toml: ConfigStore.defaultTOML))
+        ?? TingConfig(toneFrequencies: [17500, 18000, 18500, 19000],
+                      vocabulary: [], mappings: [:])
 
     init(toneFrequencies: [Double], vocabulary: [String],
          mappings: [String: TingAction], replacements: [String: String] = [:],
          rewrite: RewriteConfig = RewriteConfig()) {
         self.toneFrequencies = toneFrequencies
         self.vocabulary = vocabulary
+        self.extraVocabulary = []
         self.mappings = mappings
         self.replacements = replacements
         self.rewrite = rewrite
     }
 
     private enum CodingKeys: String, CodingKey {
-        case toneFrequencies, vocabulary, mappings, replacements, rewrite
+        case toneFrequencies, vocabulary, extraVocabulary, mappings, replacements, rewrite
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         toneFrequencies = try container.decodeIfPresent([Double].self, forKey: .toneFrequencies)
-            ?? Self.default.toneFrequencies
+            ?? [17500, 18000, 18500, 19000]
         vocabulary = try container.decodeIfPresent([String].self, forKey: .vocabulary) ?? []
+        extraVocabulary = try container.decodeIfPresent([String].self, forKey: .extraVocabulary) ?? []
         mappings = try container.decodeIfPresent([String: TingAction].self, forKey: .mappings) ?? [:]
         replacements = try container.decodeIfPresent([String: String].self, forKey: .replacements) ?? [:]
         rewrite = try container.decodeIfPresent(RewriteConfig.self, forKey: .rewrite) ?? RewriteConfig()
@@ -218,6 +199,29 @@ done
     /// Parse literate TOML (exposed for tests).
     public static func parse(toml: String) throws -> TingConfig {
         try TOMLDecoder().decode(TingConfig.self, from: toml)
+    }
+
+    /// Layered parse: the user document is applied over the defaults with
+    /// plain per-key precedence — a key the user writes wins wholesale
+    /// (lists and inline tables included); a key they don't comes from
+    /// defaults. Section tables ([rewrite], [mappings], [replacements])
+    /// merge per contained key so overriding one mapping keeps the rest.
+    public static func parse(defaults: String, user: String) throws -> TingConfig {
+        let base = try TOMLTable(string: defaults)
+        let overlay = try TOMLTable(string: user)
+        return try TOMLDecoder().decode(TingConfig.self, from: merged(base: base, overlay: overlay))
+    }
+
+    private static func merged(base: TOMLTable, overlay: TOMLTable) -> TOMLTable {
+        for key in overlay.keys {
+            if let baseTable = base[key]?.table, let overTable = overlay[key]?.table,
+               !baseTable.inline, !overTable.inline {
+                base[key] = merged(base: baseTable, overlay: overTable)
+            } else {
+                base[key] = overlay[key]
+            }
+        }
+        return base
     }
 
     public func action(forKey key: String) -> TingAction? {
@@ -260,289 +264,17 @@ public final class ConfigStore {
     static let directoryURL = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("tingle", isDirectory: true)
-    static let configURL = directoryURL.appendingPathComponent("config.toml")
-    static let legacyJSONURL = directoryURL.appendingPathComponent("config.json")
+    public static let configURL = directoryURL.appendingPathComponent("config.toml")
+    public static let defaultConfigURL = directoryURL.appendingPathComponent("default-config.toml")
 
-    /// The literate default config: the file IS the documentation.
-    public static let defaultVocabulary: [String] = [
-        "Claude",
-        "Claude Code",
-        "Codex",
-        "tingle",
-        "TOML",
-        "JSON",
-        "YAML",
-        "GitHub",
-        "git",
-        "rebase",
-        "repo",
-        "monorepo",
-        "changelog",
-        "diff",
-        "regex",
-        "grep",
-        "bash",
-        "zsh",
-        "shell",
-        "sudo",
-        "chmod",
-        "ssh",
-        "localhost",
-        "DNS",
-        "API",
-        "CLI",
-        "SDK",
-        "IDE",
-        "CI",
-        "linter",
-        "TypeScript",
-        "JavaScript",
-        "Python",
-        "Swift",
-        "SwiftPM",
-        "Rust",
-        "Xcode",
-        "VS Code",
-        "Cursor",
-        "tmux",
-        "Docker",
-        "Kubernetes",
-        "kubectl",
-        "Postgres",
-        "SQL",
-        "SQLite",
-        "Redis",
-        "npm",
-        "pip",
-        "uv",
-        "async",
-        "await",
-        "enum",
-        "struct",
-        "mutex",
-        "goroutine",
-        "lambda",
-        "callback",
-        "closure",
-        "refactor",
-        "backtrace",
-        "stack trace",
-        "segfault",
-        "nil",
-        "null",
-        "boolean",
-        "int",
-        "float",
-        "tuple",
-        "dict",
-        "hashmap",
-        "iterator",
-        "recursion",
-        "memoize",
-        "O of N",
-        "big O",
-        "endpoint",
-        "webhook",
-        "OAuth",
-        "JWT",
-        "TLS",
-        "HTTPS",
-        "gRPC",
-        "protobuf",
-        "WebSocket",
-        "frontend",
-        "backend",
-        "middleware",
-        "microservice",
-        "Kafka",
-        "cron",
-        "daemon",
-        "systemd",
-        "launchd",
-        "Homebrew",
-        "cask",
-        "notarize",
-        "codesign",
-        "entitlement",
-        "TCC",
-        "Tutor Intelligence",
-        "teleop",
-        "end effector",
-        "gripper",
-        "servo",
-        "actuator",
-        "encoder",
-        "IMU",
-        "lidar",
-        "URDF",
-        "ROS",
-        "PLC",
-        "kinematics",
-        "inverse kinematics",
-        "trajectory",
-        "waypoint",
-        "pick and place",
-        "palletize",
-        "conveyor",
-        "workcell",
-        "PCB",
-        "firmware",
-        "MicroPython",
-        "RP2350",
-        "UART",
-        "GPIO",
-        "I2C",
-        "SPI",
-        "ADC",
-        "PWM",
-        "oscilloscope",
-        "solder",
-        "Teenage Engineering",
-        "Goertzel",
-        "ultrasonic",
-        "beacon",
-        "chirp",
-        "Cubilux",
-        "line-in",
-        "AAA battery",
-        "power cycle",
-        "subagent",
-        "agentic",
-        "LLM",
-        "GPT",
-        "Anthropic",
-        "OpenAI",
-        "Gemini",
-        "prompt",
-        "system prompt",
-        "context window",
-        "token",
-        "tokenizer",
-        "inference",
-        "fine-tune",
-        "RAG",
-        "embedding",
-        "vector database",
-        "hallucination",
-        "eval",
-        "benchmark",
-        "MCP",
-        "tool call",
-        "orchestration",
-        "worktree",
-        "sandbox",
-        "headless",
-        "transcript",
-        "session",
-        "hook",
-        "slash command",
-        "chain of thought",
-        "depalletizing",
-        "palletizing",
-        "singulation",
-        "kitting",
-        "bin picking",
-        "pick point",
-        "cycle time",
-        "throughput",
-        "uptime",
-        "downtime",
-        "end-of-arm tooling",
-        "EOAT",
-        "suction cup",
-        "vacuum gripper",
-        "force-torque sensor",
-        "tool center point",
-        "flange",
-        "wrist joint",
-        "seventh axis",
-        "gantry",
-        "cobot",
-        "stepper motor",
-        "harmonic drive",
-        "swerve drive",
-        "infeed",
-        "outfeed",
-        "tote",
-        "SKU",
-        "carton",
-        "slip sheet",
-        "pallet jack",
-        "light curtain",
-        "area scanner",
-        "e-stop",
-        "interlock",
-        "lockout tagout",
-        "teach pendant",
-        "homing",
-        "joint limits",
-        "joint space",
-        "Cartesian",
-        "quaternion",
-        "rotation matrix",
-        "kinematic chain",
-        "forward kinematics",
-        "singularity",
-        "reachability",
-        "motion planning",
-        "collision checking",
-        "payload",
-        "calibration",
-        "hand-eye calibration",
-        "extrinsics",
-        "intrinsics",
-        "fiducial",
-        "AprilTag",
-        "ArUco",
-        "point cloud",
-        "depth camera",
-        "UWB",
-        "pose estimation",
-        "bounding box",
-        "segmentation",
-        "YOLO",
-        "ONNX",
-        "TensorRT",
-        "PyTorch",
-        "quantization",
-        "teleoperation",
-        "provisioning",
-        "commissioning",
-        "site survey",
-        "bootloader",
-        "watchdog",
-        "over-the-air update",
-        "CAN bus",
-        "CANopen",
-        "Modbus",
-        "EtherCAT",
-        "RS-485",
-        "HMI",
-        "VFD",
-        "PoE",
-        "WireGuard",
-        "WebRTC",
-        "RTSP",
-        "kustomize",
-        "Terraform",
-        "Dockerfile",
-        "Grafana",
-        "Prometheus",
-        "ClickHouse",
-        "alembic",
-        "SQLAlchemy",
-        "pytest",
-        "mypy",
-        "ruff",
-        "Tutor",
-        "README",
-        "semver",
-        "config",
-    ]
-
+    /// The defaults document: single source of truth for every default,
+    /// mirrored to default-config.toml on every launch so it is always
+    /// current, browsable, and copy-from-able. Humans edit config.toml.
     public static let defaultTOML = """
-    # tingle configuration - this file is the documentation.
-    # Edit and save: tingle reloads it live, no restart needed.
+    # tingle defaults - REWRITTEN BY TINGLE ON EVERY LAUNCH; edits here are
+    # lost. This file is the documentation: browse it, then copy any key
+    # into config.toml (same folder) and change it there. Keys in
+    # config.toml win; sections like [mappings] merge per key.
     #
     # -- The device ------------------------------------------------------------
     # Squeeze the ting's handle to dictate; release to finish.
@@ -636,6 +368,11 @@ public final class ConfigStore {
       "config",
     ]
 
+    # Your words, concatenated onto the built-in vocabulary above. Add
+    # here (in config.toml) so built-in list updates still reach you;
+    # override `vocabulary` itself only to discard the built-ins.
+    extraVocabulary = []
+
     # Corrections applied to finalized dictation text (word-boundary,
     # case-sensitive) - for words the recognizer refuses to spell right
     # no matter how much vocabulary biasing it gets.
@@ -652,12 +389,12 @@ public final class ConfigStore {
     # fixed, tested instruction; customInstructions is freeform and is
     # applied last. Filler removal works even without Apple Intelligence.
     [rewrite]
-    enabled = false
+    enabled = true
     removeFillers = true        # delete um/uh/er and the comma debris they leave
     fixPunctuation = true       # sentence boundaries, capitalization, run-ons
     fixGrammar = false          # light repair only; off because the model sometimes over-normalizes
     correctVocabulary = true    # let the model fix near-miss transcriptions of your vocabulary terms
-    technicalFormatting = false # "dash dash force" -> "--force", "foo dot py" -> "foo.py"
+    technicalFormatting = true  # "dash dash force" -> "--force", "foo dot py" -> "foo.py"
     customInstructions = ""
 
     [mappings]
@@ -697,6 +434,23 @@ public final class ConfigStore {
     ''' }
     """
 
+    /// The starter user config: near-empty on purpose. The defaults doc
+    /// carries the documentation; this file carries only what the user
+    /// changes.
+    public static let userTemplateTOML = """
+    # tingle configuration - edit and save: tingle reloads it live.
+    #
+    # Every available key, documented, lives in default-config.toml next
+    # to this file (rewritten by the app on every launch, so it is always
+    # current). Copy anything you want to change into THIS file: keys
+    # here win, and sections like [mappings] merge per key, so you only
+    # need the lines you actually change.
+
+    # Words the recognizer keeps mangling, added on top of the built-in
+    # vocabulary list (see default-config.toml).
+    extraVocabulary = []
+    """
+
     private(set) var config: TingConfig = .default
 
     private var observers: [() -> Void] = []
@@ -704,8 +458,7 @@ public final class ConfigStore {
     private let log = Logger(subsystem: Log.subsystem, category: "config")
 
     init() {
-        migrateLegacyDirectory()
-        migrateLegacyJSON()
+        writeDefaultsMirror()
         ensureConfigFileExists()
         load()
         startWatching()
@@ -720,26 +473,20 @@ public final class ConfigStore {
         observers.forEach { $0() }
     }
 
-    /// The pre-rename app dir was ~/Library/Application Support/tingd;
-    /// carry the whole thing (config, backups) across once.
-    private func migrateLegacyDirectory() {
-        let fm = FileManager.default
-        let old = Self.directoryURL.deletingLastPathComponent().appendingPathComponent("tingd")
-        guard fm.fileExists(atPath: old.path),
-              !fm.fileExists(atPath: Self.directoryURL.path) else { return }
-        try? fm.moveItem(at: old, to: Self.directoryURL)
-        log.info("migrated legacy tingd directory to tingle")
-    }
-
-    /// Pre-TOML installs used config.json; retire it visibly (renamed to
-    /// .bak) rather than leaving a dead file that looks authoritative.
-    private func migrateLegacyJSON() {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: Self.legacyJSONURL.path),
-              !fm.fileExists(atPath: Self.configURL.path) else { return }
-        try? fm.moveItem(at: Self.legacyJSONURL,
-                         to: Self.legacyJSONURL.appendingPathExtension("bak"))
-        log.info("legacy config.json retired to config.json.bak; writing default config.toml")
+    /// default-config.toml is a mirror of the embedded defaults, refreshed
+    /// on every launch so it always documents the running version. The app
+    /// never reads it back — a mangled mirror cannot break anything.
+    private func writeDefaultsMirror() {
+        do {
+            try FileManager.default.createDirectory(
+                at: Self.directoryURL, withIntermediateDirectories: true)
+            if (try? String(contentsOf: Self.defaultConfigURL, encoding: .utf8)) != Self.defaultTOML {
+                try Self.defaultTOML.write(to: Self.defaultConfigURL, atomically: true, encoding: .utf8)
+                log.info("defaults mirror refreshed at \(Self.defaultConfigURL.path, privacy: .public)")
+            }
+        } catch {
+            log.error("failed to write defaults mirror: \(String(describing: error))")
+        }
     }
 
     private func ensureConfigFileExists() {
@@ -747,19 +494,19 @@ public final class ConfigStore {
         do {
             try fm.createDirectory(at: Self.directoryURL, withIntermediateDirectories: true)
             if !fm.fileExists(atPath: Self.configURL.path) {
-                try Self.defaultTOML.write(to: Self.configURL, atomically: true, encoding: .utf8)
-                log.info("created default config at \(Self.configURL.path, privacy: .public)")
+                try Self.userTemplateTOML.write(to: Self.configURL, atomically: true, encoding: .utf8)
+                log.info("created starter config at \(Self.configURL.path, privacy: .public)")
             }
         } catch {
-            log.error("failed to create default config: \(String(describing: error))")
+            log.error("failed to create starter config: \(String(describing: error))")
         }
     }
 
     private func load() {
         do {
             let text = try String(contentsOf: Self.configURL, encoding: .utf8)
-            config = try TingConfig.parse(toml: text)
-            log.info("config loaded")
+            config = try TingConfig.parse(defaults: Self.defaultTOML, user: text)
+            log.info("config loaded (user overlay on defaults)")
         } catch {
             log.error("failed to load config (keeping previous): \(String(describing: error))")
         }

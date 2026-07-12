@@ -118,8 +118,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // All configuration is the JSON file (live-reloaded on save);
         // this opens it in the default editor.
         let editConfigItem = NSMenuItem(title: "Edit config…", action: #selector(openConfigFile), keyEquivalent: ",")
+        let viewDefaultsItem = NSMenuItem(title: "View default config…", action: #selector(openDefaultConfigFile), keyEquivalent: "")
         editConfigItem.target = self
         menu.addItem(editConfigItem)
+        viewDefaultsItem.target = self
+        menu.addItem(viewDefaultsItem)
 
         // Version + updates are always visible (discoverability); the
         // check is only actionable in the installed .app — Sparkle cannot
@@ -542,6 +545,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openConfigFile() {
         NSWorkspace.shared.open(ConfigStore.configURL)
+    }
+
+    @objc private func openDefaultConfigFile() {
+        NSWorkspace.shared.open(ConfigStore.defaultConfigURL)
     }
 
     // MARK: - Launch at Login
