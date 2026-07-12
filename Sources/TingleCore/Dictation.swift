@@ -657,68 +657,119 @@ final class DictationSession {
 /// own AVAudioEngine — every squeeze risked the engine spin-up dead zone
 /// (~1 in 3 quick single words lost). The engine now stays warm for 60s
 /// after the last session, so consecutive dictations attach instantly.
+///
+/// Threading: the engine lives on AudioEngineOps.queue, exclusively (same
+/// rules as AudioBackend — a wedged engine must never be reachable from the
+/// main thread, and a configuration change abandons the engine rather than
+/// reusing it). attach() is called from dictation's session task, never
+/// from main, so its bounded queue hop is safe.
 final class WarmCapture {
     static let shared = WarmCapture()
 
+    /// AudioEngineOps.queue only.
     private var engine: AVAudioEngine?
     private var uid: String?
+    private var configChangeObserver: NSObjectProtocol?
+    private var idleTeardown: DispatchWorkItem?
     private let lock = NSLock()
     private var consumer: ((AVAudioPCMBuffer) -> Void)?
-    private var idleTeardown: DispatchWorkItem?
     private let log = Logger(subsystem: Log.subsystem, category: "warmcapture")
 
     /// Attach a buffer consumer, starting (or reusing) the engine pinned to
     /// the given device. Returns false if the engine could not start.
+    /// Blocks the calling (non-main!) thread for the engine spin-up.
     func attach(uid resolvedUID: String, consumer newConsumer: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
-        idleTeardown?.cancel()
-        idleTeardown = nil
+        #if DEBUG
+        // sync onto the engine queue from main would recreate the freeze
+        // this design exists to prevent; dictation always attaches from
+        // its session task.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        #endif
+        return AudioEngineOps.queue.sync {
+            idleTeardown?.cancel()
+            idleTeardown = nil
 
-        if let engine, uid == resolvedUID, engine.isRunning {
+            if let engine, uid == resolvedUID {
+                // isRunning takes the engine lock — probe boundedly so a
+                // wedged warm engine gets rebuilt instead of hanging us.
+                var running = false
+                let responsive = AudioEngineOps.bounded(timeout: 0.5) { running = engine.isRunning }
+                if responsive, running {
+                    lock.lock(); consumer = newConsumer; lock.unlock()
+                    return true
+                }
+            }
+            stopEngine()
+
+            let newEngine = AVAudioEngine()
+            guard AudioBackend.pinInputDevice(uid: resolvedUID, on: newEngine) else { return false }
+            let tapFormat = newEngine.inputNode.inputFormat(forBus: 0)
+            guard tapFormat.sampleRate > 0 else { return false }
+            newEngine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
+                guard let self else { return }
+                self.lock.lock()
+                let sink = self.consumer
+                self.lock.unlock()
+                sink?(buffer)
+            }
+            newEngine.prepare()
+            do {
+                try newEngine.start()
+            } catch {
+                log.error("warm capture engine failed to start: \(String(describing: error))")
+                return false
+            }
             lock.lock(); consumer = newConsumer; lock.unlock()
+            engine = newEngine
+            uid = resolvedUID
+            configChangeObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: newEngine, queue: nil
+            ) { [weak self] _ in
+                // Posted from AVFAudio's internal thread, possibly with the
+                // engine lock held — never touch the engine synchronously.
+                guard let self else { return }
+                AudioEngineOps.queue.async {
+                    guard self.engine === newEngine else { return }
+                    // Spurious post-start notification (see stillHealthy):
+                    // discarding here would kill every warm engine at birth.
+                    if AudioEngineOps.stillHealthy(
+                        newEngine, sampleRate: tapFormat.sampleRate, channelCount: tapFormat.channelCount
+                    ) { return }
+                    self.log.warning("warm capture engine configuration changed; discarding engine")
+                    self.stopEngine()
+                }
+            }
+            log.info("warm capture engine started on \(resolvedUID, privacy: .public)")
             return true
         }
-        stopEngine()
-
-        let newEngine = AVAudioEngine()
-        guard AudioBackend.pinInputDevice(uid: resolvedUID, on: newEngine) else { return false }
-        let tapFormat = newEngine.inputNode.inputFormat(forBus: 0)
-        guard tapFormat.sampleRate > 0 else { return false }
-        newEngine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            self.lock.lock()
-            let sink = self.consumer
-            self.lock.unlock()
-            sink?(buffer)
-        }
-        newEngine.prepare()
-        do {
-            try newEngine.start()
-        } catch {
-            log.error("warm capture engine failed to start: \(String(describing: error))")
-            return false
-        }
-        lock.lock(); consumer = newConsumer; lock.unlock()
-        engine = newEngine
-        uid = resolvedUID
-        log.info("warm capture engine started on \(resolvedUID, privacy: .public)")
-        return true
     }
 
     /// Detach the consumer; the engine idles for 60s in case another
     /// session follows, then tears down (clears the mic-in-use indicator).
     func detach() {
         lock.lock(); consumer = nil; lock.unlock()
-        let work = DispatchWorkItem { [weak self] in self?.stopEngine() }
-        idleTeardown = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: work)
+        AudioEngineOps.queue.async { [self] in
+            idleTeardown?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.stopEngine() }
+            idleTeardown = work
+            AudioEngineOps.queue.asyncAfter(deadline: .now() + 60, execute: work)
+        }
     }
 
+    /// AudioEngineOps.queue only. Bounded: a wedged engine (device slept or
+    /// vanished mid-configuration-change) is abandoned, not waited on.
     private func stopEngine() {
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+            self.configChangeObserver = nil
+        }
         guard let engine else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
         self.engine = nil
         uid = nil
+        AudioEngineOps.bounded {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
         log.info("warm capture engine stopped")
     }
 }

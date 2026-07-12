@@ -41,7 +41,11 @@ private func decode(_ samples: [Float]) -> [TingEvent] {
 /// the content under test — self-calibration means the whole device is
 /// loud or quiet together.
 private func prime(amplitude: Double = 0.3) -> [Float] {
+    // Three beacons: cold acquisition demands periodic x3 (the first two
+    // stay provisional and unemitted).
     silence(0.5)
+        + burst(tones[1], amplitude: amplitude) + silence(0.05) + burst(tones[3], amplitude: amplitude)
+        + silence(1.72)
         + burst(tones[1], amplitude: amplitude) + silence(0.05) + burst(tones[3], amplitude: amplitude)
         + silence(1.72)
         + burst(tones[1], amplitude: amplitude) + silence(0.05) + burst(tones[3], amplitude: amplitude)
@@ -63,7 +67,13 @@ func runGoertzelDetectorTests() {
     expectEqual(decode(silence(0.5) + burst(tones[1]) + silence(1)),
                 [], "detector: unlocked — lone tone suppressed")
     expectEqual(decode(prime()), [.beacon],
-                "detector: two consistent beacons lock; first is provisional")
+                "detector: three periodic beacons lock; first two provisional")
+
+    // Two level-matched pops must NOT lock (the -58dB false-lock class):
+    // aperiodic third pop keeps it provisional forever.
+    let pop = burst(tones[1], amplitude: 0.01) + silence(0.05) + burst(tones[3], amplitude: 0.01)
+    expectEqual(decode(silence(0.5) + pop + silence(1.4) + pop + silence(3.9) + pop + silence(1)),
+                [], "detector: aperiodic beacon-shaped pops never lock")
 
     // Sleep/wake lifecycle: pilot loss unlocks (muting line noise while
     // the ting sleeps — the 22:01-22:06 phantom-white incident); a single
@@ -125,7 +135,7 @@ func runGoertzelDetectorTests() {
     // lone beacon-lead tone arriving on schedule is a degraded beacon
     // carrying state — NOT a phantom white press (which fires the summon
     // action). Off-cadence lone tones still decode as white presses.
-    let cadence = silence(0.5) + chirp(1, 3) + silence(1.72) + chirp(1, 3) + silence(1.72)
+    let cadence = silence(0.5) + chirp(1, 3) + silence(1.72) + chirp(1, 3) + silence(1.72) + chirp(1, 3) + silence(1.72)
     expectEqual(decode(cadence + burst(tones[3]) + silence(1)),
                 [.beacon, .beaconSensed],
                 "detector: lone beacon-slot tone on cadence = presence, state unknown")

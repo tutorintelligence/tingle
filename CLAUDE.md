@@ -22,17 +22,21 @@ dictation, or the device payload. Add a regression test with every bug fix.
 
 ## Iteration workflow (with Josh)
 
-- Two blessed run states, switched with one command (Claude runs these;
-  Josh never manages instances):
-    - `scripts/dev.sh` — dev mode: quits the installed app, builds, runs
-      `.build/debug/tingle`. Use during any working session; rerun it
-      after every code change.
-    - `scripts/dev.sh --stop` — release mode: kills the dev binary and
-      reopens /Applications/tingle.app (brew-installed, Sparkle-updated).
-      ALWAYS return Josh to release mode at the end of a dev session.
-  Only one tingle may run at a time; a flock in App Support enforces it —
-  a second launch exits immediately, so switching modes without the
-  script silently no-ops.
+- THE ITERATION LOOP (Josh's standing directive — NEVER ship straight
+  to prod). For any behavior change:
+    1. Implement + unit/fixture tests green locally.
+    2. `scripts/dev.sh` — switches Josh onto the dev binary (kills the
+       installed app, force-killing if wedged; builds; launches; FAILS
+       LOUDLY if the dev binary dies at startup instead of silently
+       leaving the wrong instance running).
+    3. ASK JOSH TO TRY IT and wait for his verdict; watch logs while he
+       tests (Monitor on the log stream).
+    4. Only after his all-clear: PR → merge → release.
+    5. After the release exists: `scripts/dev.sh --stop`, update the
+       installed app to the new release, and leave Josh in release mode.
+  Commit-then-PR without a live dev test is a process violation, not a
+  shortcut. Only one tingle may run at a time (flock in App Support);
+  always switch modes via the script, never by hand.
 - Keep a log stream running for live debugging:
   `log stream --predicate 'subsystem == "com.tutorintelligence.tingle"' --info --debug`
   Note: info/debug lines do NOT persist for `log show` — stream to a file.

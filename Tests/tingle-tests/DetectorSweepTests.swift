@@ -53,12 +53,15 @@ private func sweepDecode(_ samples: [Float]) -> [TingEvent] {
 
 private func triggerChirp(amplitude: Double) -> [Float] {
     // Self-calibration prelude at the SAME amplitude (a quiet device has
-    // quiet beacons too), then the trigger pair under test.
+    // quiet beacons too). FIVE heartbeats: in noise an individual pair can
+    // fragment, and a real device beacons continuously — any consecutive
+    // periodic three lock.
     quiet(0.5)
-        + toneBurst(sweepTones[1], amplitude: amplitude) + quiet(0.05) + toneBurst(sweepTones[3], amplitude: amplitude)
-        + quiet(1.72)
-        + toneBurst(sweepTones[1], amplitude: amplitude) + quiet(0.05) + toneBurst(sweepTones[3], amplitude: amplitude)
-        + quiet(0.4)
+        + Array((0..<5).flatMap { _ in
+            toneBurst(sweepTones[1], amplitude: amplitude) + quiet(0.05)
+                + toneBurst(sweepTones[3], amplitude: amplitude) + quiet(1.72)
+        })
+        + quiet(0.2)
         + toneBurst(sweepTones[0], amplitude: amplitude)
         + quiet(0.05) + toneBurst(sweepTones[2], amplitude: amplitude) + quiet(1)
 }
@@ -127,6 +130,12 @@ func runDetectorSweepTests() {
         return Float(0.3 * sin(2 * .pi * f * t))
     }
     adversaries.append(("slow sweep through the band", glide))
+
+    // Long noise soak: minutes of dead line must never cold-lock (the
+    // -58dB false lock took minutes to appear; 25s fixtures missed it).
+    var soakRng = Rand(seed: 99)
+    let soak = (0..<Int(90 * sweepSampleRate)).map { _ in Float(soakRng.next() * 0.02) }
+    expectEqual(sweepDecode(soak), [], "sweep: 90s noise soak never locks or fires")
 
     for (name, samples) in adversaries {
         let events = sweepDecode(samples)

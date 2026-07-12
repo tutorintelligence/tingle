@@ -37,7 +37,7 @@ enum BackendState: Equatable {
         case .tingStale(_, let seconds):
             return "ting not detected (last heard \(seconds)s ago)"
         case .listeningAudio(let deviceName):
-            return "Listening (audio: \(deviceName))"
+            return "Listening on \(deviceName) — no ting heard"
         case .connectedSerial:
             return "Connected (USB serial)"
         }
@@ -309,8 +309,17 @@ final class DetectionCoordinator {
             state = .connectedSerial
         } else if let audio, audio.isRunning {
             if PinnedInput.uid != nil {
-                // Manual override: no beacon gating on the status line.
-                state = .listeningAudio(deviceName: audio.deviceName)
+                // Manual override pins DEVICE SELECTION only — presence
+                // must still be truthful (a pinned green dot on a sleeping
+                // ting misled Josh, 2026-07-11). Beacon liveness drives
+                // the state exactly like auto mode; only scanning/
+                // switching is disabled.
+                if let lastHeard = scanner.lastHeard, !scanner.isStale(now: now) {
+                    state = .tingDetected(deviceName: audio.deviceName)
+                    _ = lastHeard
+                } else {
+                    state = .listeningAudio(deviceName: audio.deviceName)
+                }
             } else if scanner.isLocked, let lastHeard = scanner.lastHeard {
                 if scanner.isStale(now: now) {
                     state = .tingStale(

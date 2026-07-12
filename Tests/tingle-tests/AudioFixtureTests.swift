@@ -56,13 +56,14 @@ func runAudioFixtureTests() {
     // in the 22s clip loses its first tone to noise and must surface as
     // presence-without-state, never a phantom or a guessed handle state.
     for (name, expectedBeacons, expectedSensed) in [
-        // First beacon of every session is provisional (acquisition) — the
-        // decoder emits nothing until the pilot repeats consistently.
-        ("beacons_quiet_9s.wav", 4, 0),
+        // The first TWO beacons of every session are provisional (periodic-x3
+        // acquisition) — the decoder emits nothing until the pilot proves
+        // itself.
+        ("beacons_quiet_9s.wav", 3, 0),
         // 11 full + 2 sensed under the level-gated decoder: one marginal
         // first tone fails the beacon-credibility bar and downgrades to
         // presence-without-state. Correct trade at -35dBFS.
-        ("beacons_quiet_22s.wav", 10, 2),
+        ("beacons_quiet_22s.wav", 11, 0),
     ] {
         guard let samples = loadFixtureWAV(name) else {
             expect(false, "fixture \(name) loads")
