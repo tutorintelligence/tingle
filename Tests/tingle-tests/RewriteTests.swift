@@ -65,6 +65,18 @@ func runRewriteTests() {
         output: "Clean text with no swearing at all here.") == nil,
         "rewrite: gate ignores profanity rule on clean text")
 
+    // Refusal boilerplate is rejected even when it embeds a revised
+    // transcript (which defeats word retention)...
+    expect(RewritePrompt.gate(
+        input: "why is this limit so damn low, fill me in on what is going on here",
+        output: "I apologize, but I cannot comply with your request to edit the transcript as it contains explicit language. Here's a revised version of the transcript: why is this limit so low, fill me in on what is going on here") != nil,
+        "rewrite: gate rejects refusal with embedded revision")
+    // ...but the SPEAKER dictating refusal-sounding text stays editable.
+    expect(RewritePrompt.gate(
+        input: "and then the model said i cannot comply with your request, which is hilarious",
+        output: "And then the model said, I cannot comply with your request, which is hilarious.") == nil,
+        "rewrite: gate allows refusal phrases the speaker dictated")
+
     runRewriteEditTests()
 }
 

@@ -72,9 +72,12 @@ public enum RewritePrompt {
     }
 
     /// A take is worth rewriting only in a size band: tiny takes gain
-    /// nothing, huge ones risk context and latency (a 230-word take
-    /// measured ~4s; the band is generous but bounded).
-    public static let eligibleWords = 4...400
+    /// nothing, and the model's documented 4,096-token context window has
+    /// to hold instructions + transcript + output — ~1,000 words is the
+    /// ceiling that fits. Latency scales linearly (a 230-word take
+    /// measured ~4s); a pending rewrite is cancelled by any user action,
+    /// so a slow long take degrades gracefully.
+    public static let eligibleWords = 4...1000
     public static func eligible(_ text: String) -> Bool {
         eligibleWords.contains(text.split(separator: " ").count)
     }
@@ -134,6 +137,31 @@ public enum RewritePrompt {
         }
         if let word = censoredProfanity(input: input, output: out) {
             return "censored '\(word)'"
+        }
+        if let marker = refusalMarker(input: input, output: out) {
+            return "refusal boilerplate '\(marker)'"
+        }
+        return nil
+    }
+
+    /// The model's refusals sometimes EMBED a full revised transcript, so
+    /// word retention passes and the boilerplate gets typed (live
+    /// regression). Markers only count when absent from the input — the
+    /// speaker may legitimately dictate refusal-sounding text.
+    private static let refusalMarkers = [
+        "as an ai language model", "as an ai chatbot", "as a language model",
+        "i cannot comply", "i can't comply", "cannot comply with your request",
+        "i cannot fulfill", "i can't fulfill", "i cannot assist",
+        "my purpose is to provide", "ethical guidelines",
+        "revised version of the transcript", "here's a revised version",
+        "contains explicit language", "cannot edit the transcript",
+    ]
+    static func refusalMarker(input: String, output: String) -> String? {
+        let inLower = input.lowercased()
+        let outLower = output.lowercased()
+        for marker in refusalMarkers
+        where outLower.contains(marker) && !inLower.contains(marker) {
+            return marker
         }
         return nil
     }
