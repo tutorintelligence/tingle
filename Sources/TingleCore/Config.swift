@@ -642,6 +642,7 @@ public final class ConfigStore {
     [replacements]
     "Tamil" = "TOML"
     "REgex" = "regex"
+    "GIT" = "git"
     "clawed" = "Claude"
     "Clawed" = "Claude"
 
