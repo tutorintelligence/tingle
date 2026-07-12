@@ -115,9 +115,9 @@ enum Flasher {
         try backupExisting()
 
         let fm = FileManager.default
-        // v2 signaling: coded chirp symbols from SymbolSet (the config's
-        // toneFrequencies are legacy-ignored — symbol shapes are the
-        // contract between Flasher and SymbolDetector).
+        // Coded chirp symbols from SymbolSet (the config's toneFrequencies
+        // are ignored — symbol shapes are the air-gap contract between
+        // Flasher and SymbolDetector).
         for index in 0..<4 {
             progress("Writing symbol \(index + 1) of 4…")
             let url = volumeURL.appendingPathComponent("\(index + 1).wav")
@@ -133,8 +133,8 @@ enum Flasher {
         try payload.write(to: mainPyURL)
         log.info("wrote main.py event engine (\(payload.count) bytes)")
 
-        // TODO(v2): also ship a config.json with dry-bus FX presets so tones
-        // bypass the active FX preset; v1 leaves the device config.json alone
+        // TODO: also ship a config.json with dry-bus FX presets so symbols
+        // bypass the active FX preset; today the device config.json is left alone
         // (pitch-shifting presets like PIXIE/ROBOT mangle the tones — see
         // DESIGN.md "Known limitation").
 

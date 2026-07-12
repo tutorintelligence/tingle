@@ -7,8 +7,8 @@ MicroPython event engine that tingle installs on the device itself.
 ## How the device is extended
 
 The ting executes `main.py` from its writable FAT disk (`TINGDISK`) at boot
-(verified fw 1.0.4; `boot.py` is not honored). "Flash EP" writes four tone
-WAVs plus [device/tingle_main.py](device/tingle_main.py), which chain-loads the
+(verified fw 1.0.4; `boot.py` is not honored). "Flash EP" writes four coded
+symbol WAVs plus [device/tingle_main.py](device/tingle_main.py), which chain-loads the
 stock `/rom/main.py` (all TE behavior preserved) and wraps its event
 callback. Deleting `main.py` from the disk restores a 100% stock device. No
 firmware is ever modified.
@@ -17,33 +17,38 @@ The wrapped callback:
 
 - prints `EVT …` lines over USB CDC serial (vbus-guarded; the serial backend
   is a passive line reader — no REPL interaction),
-- plays two-tone chirps through the line-out so events are detectable over a
-  bare 3.5mm connection,
+- plays coded symbol words through the line-out so events are detectable
+  over a bare 3.5mm connection,
 - guards itself with a crash recorder: any exception dumps a traceback to
   `/fat/tingle_crash.log` and restores the stock callback.
 
-## Chirp protocol
+## Signaling protocol
 
-Tones 1–4 (slots 0–3) are 80ms sine bursts at 17.5/18/18.5/19 kHz —
-inaudible, and far above speech, so they coexist with dictation audio.
-Chirp pairs play ~130ms apart through an on-device queue (beacons defer to
-event chirps; sequences never interleave).
+The four sample slots hold 25ms linear-chirp symbols (SymbolSet.swift is
+the air-gap contract shared by the flasher and the decoder): two disjoint
+ultrasonic bands (16.5–17.9k and 18.1–19.5 kHz) × two sweep directions —
+inaudible and far above speech, so they coexist with dictation audio.
 
-| Signal | Meaning |
+Every event is a **codeword of four symbols**, ~29ms apart (2 engine
+ticks) through the on-device queue — beacons defer to event words;
+sequences never interleave. The codebook is a Reed–Solomon [4,2] code
+over GF(4): 16 codewords with minimum Hamming distance 3, so the decoder
+**corrects any single corrupted symbol and rejects anything further** —
+noise or interference cannot turn one button into another, it can only
+(rarely) cost a word. A word occupies ~110ms on the wire.
+
+| Codeword message | Meaning |
 |---|---|
-| single tone N | white press in mode N (stock sample playback) |
-| tone N → (N+1)%4 | mode changed to N (green) |
-| tone N → (N−1)%4 | FX preset changed, in mode N (orange) |
-| tone 0 → 2 (fixed) | handle squeezed (device mic live) |
-| tone 2 → 0 (fixed) | handle released |
-| tone 1 → 3 (fixed) | beacon heartbeat (~2s), handle released |
-| tone 3 → 1 (fixed) | beacon heartbeat, handle held |
+| beaconReleased / beaconHeld | heartbeat (~2s), carries handle state |
+| triggerDown / triggerUp | handle squeezed / released |
+| white1–white4 | white press in mode 1–4 |
+| mode1–mode4 | mode changed (green) |
+| fxChanged | FX preset changed (orange) |
 
-The relative (±1) codes can never produce the fixed (±2) pairs, so decoding
-is collision-free. Beacons carry handle state so a lost trigger chirp
-self-heals within one period: the Mac synthesizes the missing edge when a
-beacon contradicts its state — from chirp-decoded beacons only (serial `EVT
-beacon` lines are stateless).
+Beacons carry handle state so a lost trigger word self-heals within one
+period: the Mac synthesizes the missing edge when a beacon contradicts
+its belief — from decoded beacon words only (serial `EVT beacon` lines
+are stateless).
 
 The beacon also drives zero-config discovery: the coordinator scans ranked
 line-in candidates (~5s dwell) until a beacon arrives, audits the top-ranked
@@ -54,26 +59,43 @@ power-save: an idle ting sleeps after 5 minutes and reads as absent — honest.
 
 ## Trigger sensing (device)
 
-The trigger has two nearly-independent sensors: a tactile switch
-(`ui.sw(4)`; trips at ~2% travel, sticky release around 40–60%) and an
-analog shaft (`ui.handle_raw()`, 0–1; fast shallow clicks barely move it).
-The payload derives edges from the switch with a 3-tick (~50ms) stability
-debounce, plus two guards: a shaft-trust release (switch claims held, shaft
-< 0.05 → release) and a stuck-latch (after a shaft-forced release, no press
-is believed until the switch physically opens — prevents ADC noise from
-flapping phantom presses).
+The trigger exposes three firmware signals: a tactile switch (`ui.sw(4)`,
+closes at ~2% travel — a hair trigger at the top of the stroke), the raw
+shaft ADC, and TE's processed position (`ui.handle()`, 0–1, rate-limited
+to ~0.35/s). The payload triggers on **full depression** using the
+processed signal, with a rate-based fast path for mashes (the processed
+signal lags a fast squeeze by ~300ms):
+
+- **press**: `handle() ≥ 0.90` (slow squeeze — the signal tracks the
+  finger, so the bottom click feels instant), OR switch closed while the
+  signal is climbing ≥0.04/tick for 3 ticks (a signature that only
+  exists mid-mash; fires ~45ms after the physical click);
+- **release**: `handle() ≤ 0.60` while genuinely descending (2 falling
+  ticks — a mash's mid-climb stall must not read as a release), or the
+  signal fully returned (≤0.05);
+- 3-tick stability confirmation on every edge.
 
 ## Audio detection (Mac)
 
-Goertzel bank at the four tone frequencies over 20ms windows (50Hz bins;
-targets land on bin centers at 48kHz). A hit requires ≥8dB over ±250Hz guard
-bins and over the in-band median; clipped windows demand 20dB dominance
-instead of rejection (hot line-in gain clips the tones themselves). Bursts
-are duration-gated (clicks and sustained program audio rejected), paired
-into chirps within a 200ms window, with a 150ms refractory after events —
-beacons never enter refractory. Auto-selected input: line-in-named devices
-ranked first; aggregates, virtual devices, and the built-in mic are never
-candidates.
+Matched-filter detection (SymbolDetector.swift): each band is
+heterodyned to baseband (carriers chosen with exact 64-sample periods at
+48kHz), decimated 48k→3k through a polyphase FIR, and slid against the
+band's two decimated chirp templates with normalized complex
+correlation. A symbol is a dominant correlation peak (~19dB of
+time-bandwidth processing gain); peaks emit on 25% decay so word-rate
+symbol trains resolve. Symbols assemble into words (gap-validated), and
+words decode to the nearest codeword (distance ≤1).
+
+The decoder is **pilot-locked**: it emits nothing until three beacon
+words arrive on a plausible period (1.2–4.5s) at consistent level
+(±6dB, above an absolute plausibility floor) — line noise cannot fake a
+periodic pilot. Losing the pilot for ~3 periods (device asleep,
+unplugged) unlocks and mutes the decoder; a single beacon at the
+remembered level fast re-locks after sleep. The pilot's measured level
+continuously calibrates a credibility gate: words far quieter than the
+device's demonstrated output are discarded. Auto-selected input:
+line-in-named devices ranked first; aggregates, virtual devices, and the
+built-in mic are never candidates.
 
 ## Dictation (Mac, macOS 26+)
 

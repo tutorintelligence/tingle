@@ -1,6 +1,6 @@
 import Foundation
 
-/// v2 decoder: matched-filter detection of the SymbolSet chirps.
+/// Matched-filter decoder for the SymbolSet chirp symbols.
 ///
 /// Pipeline per band (low 17.25k / high 18.75k center):
 ///   heterodyne to baseband (carrier periods are exactly 64 samples at
@@ -13,13 +13,12 @@ import Foundation
 /// normalized threshold AND dominates the sibling template. ~19dB of
 /// processing gain (TB = 80) means real symbols sit far above anything
 /// noise, speech, or the ting's lo-fi intermod artifacts can produce —
-/// the v1 heuristic pile (hysteresis, guard bins, vetoes) has no job
-/// here and does not exist.
+/// no per-window threshold heuristics are needed or present.
 ///
-/// KEPT from v1 (transport-agnostic): the beacon pilot-acquisition lock
-/// (3 periodic consistent beacons; staleness unlock; fast re-lock),
-/// level self-calibration relative to the pilot, plausibility floor,
-/// and presence-without-state (beaconSensed) for degraded beacons.
+/// Above detection sits the pilot-acquisition lock (3 periodic
+/// level-consistent beacons required before ANY event is emitted;
+/// staleness unlocks; single-beacon fast re-lock after sleep) and level
+/// self-calibration relative to the pilot's measured output.
 public struct SymbolDetector {
     public struct Configuration {
         public var sampleRate: Double = SymbolSet.sampleRate
@@ -27,11 +26,16 @@ public struct SymbolDetector {
         public var corrThreshold = 0.45
         /// Peak must beat the sibling template by this factor.
         public var dominance = 1.6
-        /// Refractory per band after a peak (seconds).
-        public var refractory = 0.10
-        /// Partner window for the second symbol of a pair (seconds).
-        public var chirpWait = 0.35
-        /// Level gates relative to the pilot EMA (dB), as in v1.
+        /// Refractory per band after a peak (seconds). Symbols arrive
+        /// every ~29ms in a word, so this only suppresses double-counting
+        /// of one symbol's own correlation cone.
+        public var refractory = 0.015
+        /// Max age of symbols considered for a word, and the gap bounds
+        /// between consecutive symbols of one word.
+        public var wordWindow = 0.5
+        public var minSymbolGap = 0.015
+        public var maxSymbolGap = 0.070
+        /// Level gates relative to the pilot EMA (dB).
         public var levelSlackDB = 10.0
         /// Absolute plausibility floor for pilot acquisition (dB,
         /// amplitude-estimate units; provisional until live capture).
@@ -78,9 +82,8 @@ public struct SymbolDetector {
     private static let decimation = 16
     private static let templateTaps = SymbolSet.frameCount / decimation   // 240
 
-    // MARK: - Protocol/lock state (ported from v1)
+    // MARK: - Protocol/lock state
 
-    private var pendingSymbol: (symbol: Int, at: Double, levelDB: Double)?
     private(set) public var locked = false
     private var provisionalBeacons: [(at: Double, levelDB: Double)] = []
     private var rememberedLevelDB: Double?
@@ -206,9 +209,13 @@ public struct SymbolDetector {
             }
         }
 
-        // Rising-peak tracking: emit at the local maximum.
+        // Peak tracking with PEAK-DROP emission: in a word, the next
+        // symbol of the same band arrives ~29ms later and the correlation
+        // dip between them may not fall below the absolute threshold —
+        // emit as soon as the tracked peak has decayed by 25%.
         if best.corr >= configuration.corrThreshold,
-           best.corr * 1.0 >= best.sibling * configuration.dominance {
+           best.corr >= best.sibling * configuration.dominance,
+           best.corr >= band.trackingCorr * 0.75 || band.trackingSymbol < 0 {
             if best.corr > band.trackingCorr {
                 band.trackingCorr = best.corr
                 band.trackingSymbol = best.symbol
@@ -232,49 +239,63 @@ public struct SymbolDetector {
         return []
     }
 
-    // MARK: - Pair protocol + pilot lock (v1 semantics, tiny now)
+    // MARK: - Codeword protocol + pilot lock
+
+    /// Recent symbol detections awaiting word assembly.
+    private var symbolStream: [(symbol: Int, at: Double, levelDB: Double)] = []
 
     private mutating func handleSymbol(_ symbol: Int, at: Double, levelDB: Double) -> [TingEvent] {
-        guard let pending = pendingSymbol, at - pending.at <= configuration.chirpWait else {
-            pendingSymbol = (symbol, at, levelDB)
+        symbolStream.append((symbol, at, levelDB))
+        symbolStream.removeAll { at - $0.at > configuration.wordWindow }
+        guard symbolStream.count >= 4 else { return [] }
+        let word = symbolStream.suffix(4)
+        // Consecutive gaps must look like one transmitted word.
+        let times = word.map(\.at)
+        for i in 1..<4 {
+            let gap = times[i] - times[i - 1]
+            guard gap >= configuration.minSymbolGap, gap <= configuration.maxSymbolGap else { return [] }
+        }
+        let received = word.map(\.symbol)
+        // Nearest codeword; d=3 corrects any single symbol error.
+        var bestMessage = -1
+        var bestDistance = 2
+        for (message, code) in SymbolSet.codebook.enumerated() {
+            let d = zip(received, code).filter(!=).count
+            if d < bestDistance {
+                bestDistance = d
+                bestMessage = message
+            }
+        }
+        guard bestMessage >= 0 else {
+            diagnosticsBuffer.append("symbols \(received) match no codeword (d>1) — dropped")
             return []
         }
-        pendingSymbol = nil
-        let a = pending.symbol, b = symbol
-        switch (a, b) {
-        case (1, 3): return acquireAndEmit(.beacon, level: pending.levelDB, at: at)
-        case (3, 1): return acquireAndEmit(.beaconHeld, level: pending.levelDB, at: at)
-        case (0, 2): return userEvent(.triggerDown, level: pending.levelDB)
-        case (2, 0): return userEvent(.triggerUp, level: pending.levelDB)
-        default:
-            let delta = (b - a + 4) % 4
-            switch delta {
-            case 1: return userEvent(.modeChanged(mode: a + 1), level: pending.levelDB)
-            case 3: return userEvent(.fxChanged(preset: nil), level: pending.levelDB)
-            default:
-                // Same-symbol pair = white press (the device queues its
-                // mode symbol twice; serialized, so it can never
-                // interleave with a beacon).
-                return userEvent(.whitePress(mode: a + 1), level: pending.levelDB)
-            }
+        symbolStream.removeAll()
+        let level = word.map(\.levelDB).reduce(0, +) / 4
+        if bestDistance > 0 {
+            diagnosticsBuffer.append("word \(received) corrected (d=1) -> msg \(bestMessage)")
+        }
+        switch SymbolSet.Message(rawValue: bestMessage) {
+        case .beaconReleased: return acquireAndEmit(.beacon, level: level, at: at)
+        case .beaconHeld: return acquireAndEmit(.beaconHeld, level: level, at: at)
+        case .triggerDown: return userEvent(.triggerDown, level: level)
+        case .triggerUp: return userEvent(.triggerUp, level: level)
+        case .white1, .white2, .white3, .white4:
+            return userEvent(.whitePress(mode: bestMessage - 3), level: level)
+        case .mode1, .mode2, .mode3, .mode4:
+            return userEvent(.modeChanged(mode: bestMessage - 7), level: level)
+        case .fxChanged: return userEvent(.fxChanged(preset: nil), level: level)
+        case .none:
+            diagnosticsBuffer.append("spare codeword \(bestMessage) — ignored")
+            return []
         }
     }
 
-    /// Time-driven duties: lone-symbol resolution and pilot staleness.
+    /// Time-driven duties: stale partial words and pilot staleness.
     private mutating func tick(now: Double) -> [TingEvent] {
-        var events: [TingEvent] = []
-        if let pending = pendingSymbol, now - pending.at > configuration.chirpWait {
-            pendingSymbol = nil
-            if pending.symbol == 1 || pending.symbol == 3, beaconIsDue(at: pending.at) {
-                noteBeacon(at: pending.at)
-                diagnosticsBuffer.append("lone S\(pending.symbol) on beacon cadence -> beacon(state unknown)")
-                events.append(.beaconSensed)
-            } else {
-                // Lone symbols are NOT events in this protocol (every real
-                // event is a pair; white is a same-symbol pair). A lone is
-                // a degraded pair or noise: log and drop.
-                diagnosticsBuffer.append("lone S\(pending.symbol) — no event (pairs only)")
-            }
+        if let last = symbolStream.last, now - last.at > configuration.wordWindow, !symbolStream.isEmpty {
+            diagnosticsBuffer.append("partial word \(symbolStream.map(\.symbol)) timed out — dropped")
+            symbolStream.removeAll()
         }
         if locked, let last = lastBeaconAt, now - last > 3.2 * (beaconInterval ?? 2.0) {
             locked = false
@@ -282,7 +303,7 @@ public struct SymbolDetector {
             provisionalBeacons.removeAll()
             diagnosticsBuffer.append("beacon pilot lost — decoder unlocked")
         }
-        return events
+        return []
     }
 
     private mutating func userEvent(_ event: TingEvent, level: Double) -> [TingEvent] {
@@ -343,13 +364,4 @@ public struct SymbolDetector {
         lastBeaconAt = at
     }
 
-    private func beaconIsDue(at: Double) -> Bool {
-        guard let last = lastBeaconAt else { return false }
-        let expected = beaconInterval ?? 2.0
-        let elapsed = at - last
-        for k in 1...2 where abs(elapsed - expected * Double(k)) <= 0.20 * expected {
-            return true
-        }
-        return false
-    }
 }

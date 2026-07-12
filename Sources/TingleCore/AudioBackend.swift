@@ -125,12 +125,12 @@ public final class AudioBackend: TingBackend {
             return
         }
 
-        // v2 decoder is built for exactly 48kHz (its heterodyne carriers
+        // The symbol decoder is built for exactly 48kHz (its heterodyne carriers
         // are integer fractions of the sample rate). Devices have always
         // run 48k here; refuse anything else loudly rather than decode
         // garbage. (A rate converter is a known TODO.)
         guard format.sampleRate == SymbolSet.sampleRate else {
-            log.error("input device at \(format.sampleRate)Hz — v2 symbol decoder requires 48000Hz; not decoding")
+            log.error("input device at \(format.sampleRate)Hz — the symbol decoder requires 48000Hz; not decoding")
             detectionQueue.async { self.detector = nil }
             return
         }

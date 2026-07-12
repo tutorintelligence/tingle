@@ -18,13 +18,17 @@ WHITE_UP = 2 << 16
 
 class FakeUI:
     def __init__(self):
-        self.sw4 = 0          # handle switch: 0 released, 1 held
-        self.raw = 0.0        # analog shaft position
+        self.sw4 = 0          # legacy switch (no longer drives the trigger)
+        self.raw = 0.0        # legacy raw shaft
+        self.hdl = 0.0        # TE's processed handle position 0..1 (drives the trigger)
         self.vbus = 1
         self.said = []        # captured via fake print in namespace
 
     def sw(self, i):
         return self.sw4 if i == 4 else 1
+
+    def handle(self):
+        return self.hdl
 
     def handle_raw(self):
         return self.raw
@@ -110,24 +114,24 @@ class PayloadTests(unittest.TestCase):
         ns["q"]()
         self.assertTrue(said[0].startswith("S "), "state header on poll")
         # released-state beacon = chirp (1, 3)
-        self.assertEqual(spl.triggers[:2], [1, 3])
+        self.assertEqual(spl.triggers[:4], [0, 0, 0, 0])  # beaconReleased codeword
 
     def test_beacon_encodes_held_state(self):
         ns, ui, spl, said = boot()
-        ui.sw4, ui.raw = 1, 0.9
+        ui.hdl = 0.95
         ticks(ns, 25)   # debounce + edge + full chirp queue drain
         spl.triggers.clear()
         ticks(ns, 140)
-        self.assertEqual(spl.triggers[:2], [3, 1], "held beacon must be (3,1)")
+        self.assertEqual(spl.triggers[:4], [0, 1, 1, 2], "held beacon = codeword 1")
 
     def test_trigger_edges_debounced_and_chirped(self):
         ns, ui, spl, said = boot()
-        ui.sw4, ui.raw = 1, 0.9
+        ui.hdl = 0.95
         ticks(ns, 10)
         ns["q"]()
         self.assertIn("EVT trigger_down", said)
         self.assertEqual(spl.triggers[:1], [0])   # chirp (0,2) begins
-        ui.sw4, ui.raw = 0, 0.0
+        ui.hdl = 0.0
         ticks(ns, 10)
         ns["q"]()
         self.assertIn("EVT trigger_up", said)
@@ -138,17 +142,69 @@ class PayloadTests(unittest.TestCase):
         # every real hold (~trips at 0.006-0.019). Switch-only now: a
         # closed switch with a zero shaft must stay HELD indefinitely.
         ns, ui, spl, said = boot()
-        ui.sw4, ui.raw = 1, 0.0    # full squeeze, dead shaft ADC
+        ui.hdl = 0.95   # full squeeze on TE's processed signal
         ticks(ns, 610)             # ~10s hold
         ns["q"]()
         downs = sum("trigger_down" in x for x in said)
         ups = sum("trigger_up" in x for x in said)
         self.assertEqual(downs, 1, "one press")
         self.assertEqual(ups, 0, "no phantom release during a 10s hold")
-        ui.sw4 = 0
+        ui.hdl = 0.0
         ticks(ns, 10)
         ns["q"]()
         self.assertTrue(any("trigger_up" in x for x in said), "release on switch open")
+
+    def test_mash_fires_fast_via_rate_path(self):
+        # Measured: handle() slews ~0.05/tick on a mash while the switch
+        # is already closed. The rate path must fire within ~7 ticks
+        # instead of waiting ~19 ticks for the 0.90 threshold.
+        ns, ui, spl, said = boot()
+        ui.sw4 = 1
+        fired_at = None
+        for i in range(30):
+            ui.hdl = min(0.99, 0.05 * i)
+            ns["_tingle_cb"](TICK)
+            ns["q"]()
+            if fired_at is None and any("trigger_down" in x for x in ui.said + said):
+                fired_at = i
+        self.assertIsNotNone(fired_at, "mash fires")
+        self.assertLess(fired_at, 9, f"rate path fires fast (tick {fired_at})")
+
+    def test_mash_climb_stall_does_not_release(self):
+        # Regression (00:46): one slow tick mid-climb (delta < 0.04 while
+        # handle < 0.60) dropped the mash flag and the low handle read as
+        # a release -> instant untrigger/retrigger. Release now requires
+        # a genuine FALLING run.
+        ns, ui, spl, said = boot()
+        ui.sw4 = 1
+        profile = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35,
+                   0.36, 0.36,                     # the stall
+                   0.41, 0.46, 0.51, 0.56, 0.61, 0.66, 0.71,
+                   0.76, 0.81, 0.86, 0.91, 0.95, 0.95, 0.95]
+        for v in profile:
+            ui.hdl = v
+            ns["_tingle_cb"](TICK)
+        ns["q"]()
+        downs = sum("trigger_down" in x for x in said)
+        ups = sum("trigger_up" in x for x in said)
+        self.assertEqual(downs, 1, "one press through the stall")
+        self.assertEqual(ups, 0, "stall never reads as release")
+        # real release still fast
+        for v in [0.9, 0.84, 0.78, 0.72, 0.66, 0.60, 0.54, 0.48, 0.4, 0.3, 0.2, 0.1, 0.0, 0.0]:
+            ui.hdl = v
+            ns["_tingle_cb"](TICK)
+        ns["q"]()
+        self.assertTrue(any("trigger_up" in x for x in said), "real release fires")
+
+    def test_slow_rest_at_top_never_fires(self):
+        # Switch closes at ~0% travel; resting there (low handle, no
+        # rate) must NOT trigger.
+        ns, ui, spl, said = boot()
+        ui.sw4 = 1
+        ui.hdl = 0.10
+        ticks(ns, 200)
+        ns["q"]()
+        self.assertFalse(any("trigger_down" in x for x in said), "no fire at rest")
 
     def test_bounce_storm_emits_no_edges(self):
         ns, ui, spl, said = boot()
@@ -166,9 +222,9 @@ class PayloadTests(unittest.TestCase):
         # prone lone symbol).
         ns, ui, spl, said = boot()
         ns["_tingle_cb"](WHITE_DOWN)
-        self.assertEqual(ns["_t"]["q"], [0, 0], "white queues (sam,sam)")
+        self.assertEqual(ns["_t"]["q"], [1, 0, 1, 1], "white in mode 1 queues codeword 4")
         ticks(ns, 20)
-        self.assertEqual(spl.triggers[:2], [0, 0], "pair plays serialized")
+        self.assertEqual(spl.triggers[:4], [1, 0, 1, 1], "word plays serialized")
 
     def test_white_press_events(self):
         ns, ui, spl, said = boot()
@@ -192,7 +248,7 @@ class PayloadTests(unittest.TestCase):
         ticks(ns, 140)                       # beacons
         ns["_tingle_cb"](WHITE_DOWN)         # events
         ns["_tingle_cb"](WHITE_UP)
-        ui.sw4, ui.raw = 1, 0.9
+        ui.hdl = 0.95
         ticks(ns, 10)                        # trigger edge
         self.assertEqual(said, [], "callback printed! wedge risk reintroduced")
 
@@ -210,7 +266,7 @@ class PayloadTests(unittest.TestCase):
 
     def test_q_header_reflects_held_state(self):
         ns, ui, spl, said = boot()
-        ui.sw4, ui.raw = 1, 0.9
+        ui.hdl = 0.95
         ticks(ns, 10)
         said.clear()
         ns["q"]()
@@ -254,7 +310,7 @@ class SlotSelfHealTests(unittest.TestCase):
         ticks(ns, 5)
         self.assertEqual(len(spl.loads), 4)
         ticks(ns, 130)          # beacon period passes after heal
-        self.assertEqual(spl.triggers[:2], [1, 3], "beacon resumes after heal")
+        self.assertEqual(spl.triggers[:4], [0, 0, 0, 0], "beacon resumes after heal")
 
     def test_rotation_heals_one_slot_every_period(self):
         # Default CPython boot: _tms is None (no wake detection) — the
@@ -271,7 +327,7 @@ class SlotSelfHealTests(unittest.TestCase):
         ns, ui, spl, said = boot()
         clock = install_clock(ns)
         clock[0] += 300000
-        ui.sw4, ui.raw = 1, 0.9   # squeeze at the same time as wake
+        ui.hdl = 0.95   # squeeze at the same time as wake
         ticks(ns, 1)
         # Trigger chirp is queued; reloads must wait for the queue AND the
         # post-tone gap to drain before touching any slot.
