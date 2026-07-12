@@ -100,18 +100,19 @@ public struct GoertzelDetector {
     private var tones: [ToneState]
     /// A completed valid burst awaiting either a chirp's second burst or the
     /// chirp-wait timeout (-> white press).
-    private var pendingBurst: (tone: Int, endWindow: Int, marginDB: Double)?
+    private var pendingBurst: (tone: Int, endWindow: Int, marginDB: Double, levelDB: Double)?
     /// Beacon cadence tracking: beacons are periodic (~1.75-2s), so a lone
     /// beacon-slot tone arriving on schedule is a beacon that lost its
     /// second tone — never a white press (phantom whites fired the summon
     /// action at low volume, 2026-07-11).
     private var lastBeaconWindow: Int?
     private var beaconIntervalWindows: Double?
-    /// EMA of beacon first-tone detection margins: the device's heartbeat
+    /// EMA of beacon first-tone LEVELS (raw dB, not margins — margins
+    /// inflate against near-silent floors): the device's heartbeat
     /// continuously calibrates "how loud a real chirp is right now". A
-    /// lone burst claiming to be a white press must be comparably strong —
-    /// noise pops are 10-20dB weaker than the device's actual output.
-    private var beaconMarginEMA: Double?
+    /// burst claiming to be a user event must be comparably loud —
+    /// artifacts and noise pops run 10-20dB colder than real output.
+    private var beaconLevelEMA: Double?
     /// EMA of burst detection margins (dB over the strictest criterion);
     /// chronically low = the user should raise the ting's volume knob.
     public private(set) var signalMarginDB: Double?
@@ -124,12 +125,20 @@ public struct GoertzelDetector {
         /// Sum/count of detection margins over the burst's hit windows.
         var marginSum = 0.0
         var marginCount = 0
+        /// Sum of raw target levels (dB) over hit windows: margins inflate
+        /// against near-silent floors, so "is this as loud as real chirps"
+        /// must compare LEVELS, not margins.
+        var levelSum = 0.0
         /// Set when this tone's current activation is a beacon's second
         /// burst: its end must be ignored rather than becoming pending.
         var suppressNextBurstEnd = false
         /// Last window in which a guard bin (not the target) was hot for
         /// this tone — the signature of a tone MOVING through the band.
         var lastGuardHotWindow = -1000
+        /// Last window this tone was hitting/on — used to discount guard
+        /// bins polluted by an ADJACENT target tone (device tones sit
+        /// 500Hz apart, so neighbors share a guard bin at the midpoint).
+        var lastActiveWindow = -1000
         /// Consecutive guard-hot windows: a glide sustains guard energy;
         /// a noise spike lasts one window and must not arm the veto.
         var guardHotStreak = 0
@@ -142,6 +151,11 @@ public struct GoertzelDetector {
         /// flat; its end is a >20dB cliff).
         var peakDB = -200.0
     }
+
+    /// Per-window margin tracing for the --decode harness (set
+    /// TINGLE_DECODE_TRACE=1): prints every window's per-tone margins.
+    /// Diagnostic only — costs a dictionary lookup per window when unset.
+    private let traceWindows = ProcessInfo.processInfo.environment["TINGLE_DECODE_TRACE"] != nil
 
     public init(configuration: Configuration) {
         self.configuration = configuration
@@ -222,8 +236,8 @@ public struct GoertzelDetector {
             // Self-calibrated strength gate: a real white press is as loud
             // as the beacons the device has been sending. Well below that =
             // noise pop, and firing an action on it runs shell commands.
-            if let reference = beaconMarginEMA, pending.marginDB < reference - 10 {
-                diagnostics.append("lone burst tone=\(pending.tone + 1) \(String(format: "%.1f", pending.marginDB))dB << beacon level \(String(format: "%.1f", reference))dB — dropped")
+            if let reference = beaconLevelEMA, pending.levelDB < reference - 10 {
+                diagnostics.append("lone burst tone=\(pending.tone + 1) level \(String(format: "%.1f", pending.levelDB))dB << beacon level \(String(format: "%.1f", reference))dB — dropped")
                 return []
             }
             diagnostics.append("lone burst tone=\(pending.tone + 1) -> whitePress")
@@ -244,6 +258,7 @@ public struct GoertzelDetector {
         let clipped = peak >= configuration.clipLevel
 
         var hits = [Bool](repeating: false, count: tones.count)
+        var margins = [Double](repeating: -200, count: tones.count)
         do {
             let floorMargin = clipped
                 ? configuration.clippedMedianMarginDB - configuration.thresholdDB
@@ -266,10 +281,30 @@ public struct GoertzelDetector {
                 // energy raises guards as much as the target); the bin's own
                 // tracked floor gives level adaptivity. Clipped windows must
                 // clear a larger floor margin, as with the old median rule.
-                let margin = min(
-                    target - guardLow,
-                    target - guardHigh,
-                    target - targetFloors[index] - floorMargin)
+                //
+                // Adjacent DEVICE tones are 500Hz apart and share a guard
+                // bin at the midpoint: when the neighbor target was active
+                // within the last ~3 windows, that guard is measuring our
+                // own protocol, not interference — discount it (fw 1.0.8's
+                // tighter chirp spacing made back-to-back tones overlap
+                // guard windows; this ate real triggerUp chirps that
+                // followed a beacon).
+                var lowPolluted = index > 0
+                    && windowClock - tones[index - 1].lastActiveWindow <= 3
+                var highPolluted = index < tones.count - 1
+                    && windowClock - tones[index + 1].lastActiveWindow <= 3
+                // Sequential protocol tones only ever pollute ONE side;
+                // BOTH neighbors recently active = broadband energy, which
+                // is exactly what guards exist to reject — keep them.
+                if lowPolluted && highPolluted {
+                    lowPolluted = false
+                    highPolluted = false
+                }
+                var criteria = [target - targetFloors[index] - floorMargin]
+                if !lowPolluted { criteria.append(target - guardLow) }
+                if !highPolluted { criteria.append(target - guardHigh) }
+                let margin = criteria.min()!
+                margins[index] = margin
                 // Schmitt trigger: strict to start, lenient to sustain —
                 // but sustain is bounded to the burst's own peak so noise
                 // can't stretch a burst past the tone's actual end.
@@ -277,6 +312,7 @@ public struct GoertzelDetector {
                 hits[index] = margin >= bar
                     && (!tones[index].isOn || target >= tones[index].peakDB - 12)
                 if hits[index] {
+                    tones[index].lastActiveWindow = windowClock
                     tones[index].peakDB = max(tones[index].peakDB, target)
                 }
                 // Guard bins DOMINATING the target = energy centered off-bin
@@ -299,8 +335,16 @@ public struct GoertzelDetector {
                     signalMarginDB = 0.9 * (signalMarginDB ?? margin) + 0.1 * margin
                     tones[index].marginSum += margin
                     tones[index].marginCount += 1
+                    tones[index].levelSum += target
                 }
             }
+        }
+
+        if traceWindows {
+            let desc = margins.enumerated().map { i, m in
+                String(format: "%d:%@%.0f", i + 1, hits[i] ? "*" : " ", m)
+            }.joined(separator: " ")
+            diagnostics.append("w\(now) [\(desc)]")
         }
 
         var events: [TingEvent] = []
@@ -309,8 +353,13 @@ public struct GoertzelDetector {
         }
 
         // Beacons (~2s heartbeat) never enter refractory — a real event chirp
-        // can start right behind one and must still decode.
-        if events.contains(where: { $0 != .beacon }) {
+        // can start right behind one and must still decode. ALL beacon
+        // variants: the exemption once covered only .beacon, so every
+        // held-state heartbeat (i.e. during dictation) blanked 150ms and
+        // ate release chirps that followed it (found via TINGLE_DECODE_TRACE
+        // on a real recording, 2026-07-11).
+        let isBeaconVariant: (TingEvent) -> Bool = { $0 == .beacon || $0 == .beaconHeld || $0 == .beaconSensed }
+        if events.contains(where: { !isBeaconVariant($0) }) {
             enterRefractory(now: now)
         }
         return events
@@ -326,6 +375,17 @@ public struct GoertzelDetector {
         } else {
             state.missStreak += 1
             state.hitStreak = 0
+            if !state.isOn {
+                // Not in a burst: a miss ends any hit streak, so the
+                // accumulators must restart — otherwise stale low-level
+                // pops from minutes ago poison the next burst's level
+                // average (observed: real beacons reading 28dB colder
+                // than they were).
+                state.marginSum = 0
+                state.marginCount = 0
+                state.levelSum = 0
+                state.peakDB = -200
+            }
         }
 
         if !state.isOn, state.hitStreak >= configuration.onWindows {
@@ -335,8 +395,49 @@ public struct GoertzelDetector {
             state.isOn = true
             state.onStartWindow = now - configuration.onWindows + 1
             state.taintedByApproach = now - state.lastGuardHotWindow <= 4
-            state.peakDB = -200
+            // Overlap race (fw 1.0.8 shrank inter-tone gaps to ~34ms): this
+            // onset can be confirmed BEFORE the previous tone's end (which
+            // needs offWindows of misses). If no pending exists but another
+            // tone is still nominally on with a valid-length, credible
+            // burst, close it now — its end confirmation is pure latency —
+            // so the pair classifies instead of decaying into a lone white.
+            if pendingBurst == nil {
+                for other in tones.indices where other != index && tones[other].isOn {
+                    var otherState = tones[other]
+                    let duration = now - otherState.onStartWindow
+                    let level = otherState.marginCount > 0 ? otherState.levelSum / Double(otherState.marginCount) : -120
+                    let credible = beaconLevelEMA.map { level >= $0 - 10 } ?? true
+                    if duration >= configuration.minBurstWindows,
+                       duration <= configuration.maxBurstWindows,
+                       !otherState.suppressNextBurstEnd,
+                       !otherState.taintedByApproach,
+                       credible {
+                        let margin = otherState.marginCount > 0 ? otherState.marginSum / Double(otherState.marginCount) : 0
+                        diagnostics.append("burst tone=\(other + 1) \(duration)w closed early (overlap with tone=\(index + 1) onset)")
+                        pendingBurst = (tone: other, endWindow: now - 1, marginDB: margin, levelDB: level)
+                        otherState.isOn = false
+                        otherState.marginSum = 0
+                        otherState.marginCount = 0
+                        otherState.levelSum = 0
+                        otherState.peakDB = -200
+                        tones[other] = otherState
+                        break
+                    }
+                }
+            }
             if let pending = pendingBurst {
+                // The incoming onset must be device-loud too: a faint
+                // artifact riding beside a real chirp must not consume the
+                // credible pending — the real partner tone is right behind
+                // it and still pairs correctly. Peak (not average): onset
+                // windows straddle the tone start and average low; -13dB
+                // allows a partial first window while artifacts (~20dB
+                // colder) still fail.
+                if let reference = beaconLevelEMA, state.peakDB < reference - 13 {
+                    diagnostics.append("onset tone=\(index + 1) peak \(String(format: "%.1f", state.peakDB))dB << beacon \(String(format: "%.1f", reference))dB — not consuming pending")
+                    tones[index] = state
+                    return events
+                }
                 pendingBurst = nil
                 let event: TingEvent
                 switch (pending.tone, index) {
@@ -347,7 +448,7 @@ public struct GoertzelDetector {
                     // Fixed pair: handle released.
                     event = .triggerUp
                 case (1, 3):
-                    beaconMarginEMA = beaconMarginEMA.map { 0.8 * $0 + 0.2 * pending.marginDB } ?? pending.marginDB
+                    beaconLevelEMA = beaconLevelEMA.map { 0.8 * $0 + 0.2 * pending.levelDB } ?? pending.levelDB
                     // Fixed pair: beacon heartbeat (~2s). Internal liveness
                     // signal — must NOT enter refractory, or it could swallow
                     // the first burst of a real event chirp right behind it.
@@ -356,7 +457,7 @@ public struct GoertzelDetector {
                     state.suppressNextBurstEnd = true
                     noteBeacon(at: now)
                 case (3, 1):
-                    beaconMarginEMA = beaconMarginEMA.map { 0.8 * $0 + 0.2 * pending.marginDB } ?? pending.marginDB
+                    beaconLevelEMA = beaconLevelEMA.map { 0.8 * $0 + 0.2 * pending.levelDB } ?? pending.levelDB
                     // Fixed pair: beacon while the handle is HELD (state-
                     // carrying heartbeat; like .beacon, never refractory).
                     event = .beaconHeld
@@ -396,19 +497,35 @@ public struct GoertzelDetector {
                 diagnostics.append("burst tone=\(index + 1) \(duration)w rejected (too long, max \(configuration.maxBurstWindows)w — program audio?)")
             } else if pendingBurst != nil {
                 diagnostics.append("burst tone=\(index + 1) \(duration)w dropped (pending burst already waiting)")
-            } else if state.taintedByApproach {
+            } else if state.taintedByApproach,
+                      !(beaconLevelEMA != nil
+                        && state.marginCount > 0
+                        && state.levelSum / Double(state.marginCount) >= beaconLevelEMA! - 10) {
                 // A glide that entered via the guard bins can complete a
                 // "burst" but must never become pending (lone bursts run
-                // actions). Chirp SECOND tones are classified at onset and
-                // never reach here, so real pairs are unaffected.
+                // actions) — UNLESS it is beacon-loud: a real chirp tone
+                // right after an adjacent real tone (e.g. triggerUp behind
+                // a beacon) lights guards via sidelobes and must not be
+                // vetoed. Chirp SECOND tones classify at onset and never
+                // reach here.
                 diagnostics.append("burst tone=\(index + 1) \(duration)w rejected (moving tone — guards hot before onset)")
             } else {
                 let avgMargin = state.marginCount > 0 ? state.marginSum / Double(state.marginCount) : 0
-                diagnostics.append("burst tone=\(index + 1) \(duration)w -> pending")
-                pendingBurst = (tone: index, endWindow: endWindow, marginDB: avgMargin)
+                let avgLevel = state.marginCount > 0 ? state.levelSum / Double(state.marginCount) : -120
+                if let reference = beaconLevelEMA, avgLevel < reference - 10 {
+                    // Too quiet to be the device (beacons prove its real
+                    // output level): artifact — never becomes pending, so
+                    // it can't squat the slot while a real chirp arrives.
+                    diagnostics.append("burst tone=\(index + 1) \(duration)w level \(String(format: "%.1f", avgLevel))dB << beacon \(String(format: "%.1f", reference))dB — ignored")
+                } else {
+                    diagnostics.append("burst tone=\(index + 1) \(duration)w margin \(String(format: "%.1f", avgMargin))dB level \(String(format: "%.1f", avgLevel))dB -> pending")
+                    pendingBurst = (tone: index, endWindow: endWindow, marginDB: avgMargin, levelDB: avgLevel)
+                }
             }
             state.marginSum = 0
             state.marginCount = 0
+            state.levelSum = 0
+            state.peakDB = -200
             // TODO: overlapping bursts (heavy FX tails stretching the first
             // tone past the second's onset) end up here with pendingBurst
             // already set and are dropped; revisit after on-hardware tuning.

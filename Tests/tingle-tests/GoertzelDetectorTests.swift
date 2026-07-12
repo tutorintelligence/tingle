@@ -99,4 +99,20 @@ func runGoertzelDetectorTests() {
     expectEqual(decode(cadence + burst(tones[0]) + silence(1)),
                 [.beacon, .beacon, .whitePress(mode: 1)],
                 "detector: non-beacon-lead lone tone on cadence stays a white press")
+
+    // Phantom-pair regression (2026-07-11, second wave): the ting's lo-fi
+    // output stage sheds faint 17.5k intermod artifacts alongside beacons;
+    // one surviving the duration filter must not hijack the beacon's first
+    // tone into modeChanged (this erased 209 chars of a real dictation).
+    let weakSpur = burst(tones[0], amplitude: 0.008)   // ~31dB below the chirps
+    expectEqual(decode(cadence + weakSpur + silence(0.02) + chirp(1, 3) + silence(1)),
+                [.beacon, .beacon, .beacon],
+                "detector: weak artifact cannot pair with a real beacon tone")
+    expectEqual(decode(cadence + weakSpur + silence(0.05) + weakSpur + silence(1)),
+                [.beacon, .beacon],
+                "detector: two weak artifacts cannot form a phantom white press")
+    // Real user chirps (beacon-loud) still classify normally after beacons.
+    expectEqual(decode(cadence + chirp(0, 2) + silence(1)),
+                [.beacon, .beacon, .triggerDown],
+                "detector: beacon-loud trigger pair unaffected by the gate")
 }
