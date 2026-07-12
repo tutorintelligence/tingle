@@ -211,9 +211,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             dot = .active
         } else {
             switch lastBackendState {
-            case .connectedSerial, .tingDetected, .listeningAudio:
+            case .connectedSerial, .tingDetected:
                 dot = .present
-            case .searching, .tingStale:
+            // Pinned but no live heartbeat: LISTENING is not PRESENT —
+            // green here once meant "asleep ting shown as ready".
+            case .searching, .tingStale, .listeningAudio:
                 dot = .searching
             case .idle, .noInputDevice:
                 dot = .none
@@ -367,11 +369,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let available = Flasher.isTingleiskMounted && !isFlashing
         flashItem.isEnabled = available
         restoreItem.isEnabled = available
-        // Firmware: show what we know. tingle can't read the running
-        // version off the device (USB reports only "1.00"), so the source
-        // of truth is the version this app last flashed.
-        if !isFlashing {
-            let flashed = UserDefaults.standard.string(forKey: "lastFlashedFirmware")
+        // Firmware: only meaningful with the ting docked (the flow needs
+        // USB for the TING BOOT disk), and the source of truth for the
+        // version is what tingle last flashed (the device doesn't report
+        // its running version over USB).
+        let docked = lastBackendState == .connectedSerial || Flasher.isTingleiskMounted
+        if !isFlashing, docked {
+            let flashed = Prefs.suite.string(forKey: "lastFlashedFirmware")
             if flashed == FirmwareUpgrader.version {
                 firmwareItem.title = "ting firmware \(FirmwareUpgrader.version) (latest)"
                 firmwareItem.isEnabled = false
@@ -513,8 +517,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// (SMAppService needs a bundled .app).
     private func registerLaunchAtLoginOnFirstRun() {
         guard Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
-              !UserDefaults.standard.bool(forKey: "launchAtLoginConfigured") else { return }
-        UserDefaults.standard.set(true, forKey: "launchAtLoginConfigured")
+              !Prefs.suite.bool(forKey: "launchAtLoginConfigured") else { return }
+        Prefs.suite.set(true, forKey: "launchAtLoginConfigured")
         do {
             try SMAppService.mainApp.register()
             log.info("launch at login enabled by default on first run")

@@ -39,7 +39,7 @@ final class PermissionsMonitor {
     /// the marker that later distinguishes "stale row after an update"
     /// from "never asked".
     private func noteGrant() {
-        if axTrusted { UserDefaults.standard.set(true, forKey: "axEverGranted") }
+        if axTrusted { Prefs.suite.set(true, forKey: "axEverGranted") }
     }
 
     func startMonitoring() {
@@ -97,7 +97,7 @@ final class PermissionsMonitor {
             // repair silently (reset + fresh prompt) instead of hoping the
             // user discovers the menu item. Once per version, so a genuine
             // manual revoke costs at most one extra prompt per update.
-            let d = UserDefaults.standard
+            let d = Prefs.suite
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
             if Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
                d.bool(forKey: "axEverGranted"),

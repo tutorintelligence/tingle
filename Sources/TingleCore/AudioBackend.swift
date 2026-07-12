@@ -6,7 +6,15 @@ import os
 /// two-tone chirps = mode/FX/handle) on the audio input via an AVAudioEngine
 /// tap feeding GoertzelDetector. Always pinned to an explicit line-in device
 /// by CoreAudio UID — never the system default input.
-final class AudioBackend: TingBackend {
+///
+/// Threading: the engine lives on AudioEngineOps.queue, exclusively — a
+/// wedged engine (device slept/vanished mid-configuration-change) must never
+/// be reachable from the main thread, or the menu freezes behind the engine
+/// lock. Public state (isRunning/deviceName/inputFormat) is updated on main.
+/// On AVAudioEngineConfigurationChange the engine is abandoned and REBUILT
+/// fresh (never restarted): a config change is exactly when the old engine
+/// may already be wedged inside AVFAudio.
+public final class AudioBackend: TingBackend {
     var onEvent: ((TingEvent) -> Void)?
     /// Fired (main queue) when the chirp SNR crosses into/out of the
     /// too-quiet regime; drives the "raise the volume knob" menu hint.
@@ -15,18 +23,31 @@ final class AudioBackend: TingBackend {
     /// Fired (main queue) when isRunning/deviceName change.
     var onStateChange: (() -> Void)?
 
-    private(set) var isRunning = false
+    public private(set) var isRunning = false
     private(set) var deviceName = "default input"
     /// The tap's native input format, available once the engine is running.
     private(set) var inputFormat: AVAudioFormat?
 
     private let deviceUID: String
     private let frequencies: [Double]
-    private let engine = AVAudioEngine()
+    /// AudioEngineOps.queue only. Optional because it is abandoned and
+    /// rebuilt on configuration changes.
+    private var engine: AVAudioEngine?
+    /// AudioEngineOps.queue-side copy of the running tap format (inputFormat
+    /// is the main-thread-facing one), for the config-change health probe.
+    private var engineFormat: AVAudioFormat?
+    private var tapInstalled = false
+    private var configChangeObserver: NSObjectProtocol?
     private var detector: GoertzelDetector?
     private let detectionQueue = DispatchQueue(label: "tingle.audio.detection")
-    private var tapInstalled = false
-    private var stopped = false
+    /// Set by stop() (any thread), read on AudioEngineOps.queue.
+    private let stoppedLock = NSLock()
+    private var _stopped = false
+    private var stopped: Bool {
+        stoppedLock.lock()
+        defer { stoppedLock.unlock() }
+        return _stopped
+    }
     private let log = Logger(subsystem: Log.subsystem, category: "audio")
 
     /// Secondary consumer of the raw tap buffers (dictation shares this
@@ -47,12 +68,12 @@ final class AudioBackend: TingBackend {
         }
     }
 
-    init(deviceUID: String, frequencies: [Double]) {
+    public init(deviceUID: String, frequencies: [Double]) {
         self.deviceUID = deviceUID
         self.frequencies = frequencies
     }
 
-    func start() {
+    public func start() {
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self, !self.stopped else { return }
@@ -61,49 +82,55 @@ final class AudioBackend: TingBackend {
                     self.onStateChange?()
                     return
                 }
-                self.startEngine()
+                AudioEngineOps.queue.async { self.startEngine() }
             }
         }
     }
 
-    func stop() {
-        stopped = true
-        if tapInstalled {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
-        engine.stop()
+    /// Non-blocking: state flips immediately; the engine is torn down on
+    /// AudioEngineOps.queue with a bounded wait. The caller (main thread)
+    /// must never block behind a possibly-wedged engine.
+    public func stop() {
+        stoppedLock.lock()
+        _stopped = true
+        stoppedLock.unlock()
         isRunning = false
+        AudioEngineOps.queue.async { self.teardownEngine() }
     }
 
-    // MARK: - Engine
+    // MARK: - Engine (AudioEngineOps.queue only)
 
     private func startEngine() {
+        guard !stopped, engine == nil else { return }
         guard !frequencies.isEmpty else {
             log.error("no tone frequencies configured; audio backend idle")
-            onStateChange?()
+            DispatchQueue.main.async { self.onStateChange?() }
             return
         }
+
+        let engine = AVAudioEngine()
 
         // Pin the input device. Pinning is mandatory: on failure the backend
         // stays stopped — NEVER a silent fallback to the default/built-in mic.
         guard Self.pinInputDevice(uid: deviceUID, on: engine) else {
             log.error("cannot pin input device \(self.deviceUID, privacy: .public); audio backend stopped")
-            onStateChange?()
+            DispatchQueue.main.async { self.onStateChange?() }
             return
         }
 
         let format = engine.inputNode.inputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             log.error("no usable audio input device; audio backend idle")
-            onStateChange?()
+            DispatchQueue.main.async { self.onStateChange?() }
             return
         }
-        inputFormat = format
 
-        detector = GoertzelDetector(
+        // Fresh detector for (possibly new) sample rate; serialized with the
+        // tap's processing blocks so a rebuild never races mid-burst DSP.
+        let detector = GoertzelDetector(
             configuration: .init(sampleRate: format.sampleRate, targetFrequencies: frequencies)
         )
+        detectionQueue.async { self.detector = detector }
 
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self, let channel = buffer.floatChannelData?[0] else { return }
@@ -147,16 +174,86 @@ final class AudioBackend: TingBackend {
             log.error("failed to start audio engine: \(String(describing: error))")
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
-            onStateChange?()
+            DispatchQueue.main.async { self.onStateChange?() }
             return
         }
 
-        isRunning = true
+        self.engine = engine
+        self.engineFormat = format
+        observeConfigurationChanges(of: engine)
+
         // Human-readable name of the pinned device for the status line
         // (kAudioObjectPropertyName — never CoreAudio aggregate internals).
-        deviceName = Self.currentInputDeviceName(of: engine) ?? deviceUID
-        log.info("audio backend listening on \(self.deviceName, privacy: .public) at \(format.sampleRate)Hz")
-        onStateChange?()
+        let name = Self.currentInputDeviceName(of: engine) ?? deviceUID
+        log.info("audio backend listening on \(name, privacy: .public) at \(format.sampleRate)Hz")
+        DispatchQueue.main.async {
+            guard !self.stopped else { return }
+            self.inputFormat = format
+            self.deviceName = name
+            self.isRunning = true
+            self.onStateChange?()
+        }
+    }
+
+    private func observeConfigurationChanges(of engine: AVAudioEngine) {
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            // Posted from AVFAudio's internal thread, potentially mid-
+            // configuration-change with the engine lock held (and, when the
+            // device vanished, already wedged on its internal semaphore).
+            // Touching the engine or blocking here can deadlock — hop to
+            // the engine queue and do nothing else.
+            guard let self else { return }
+            self.log.warning("audio engine configuration changed; probing engine health")
+            AudioEngineOps.queue.async { self.handleConfigurationChange(of: engine) }
+        }
+    }
+
+    private func handleConfigurationChange(of changed: AVAudioEngine) {
+        guard changed === engine, !stopped else { return }
+        // Spurious post-start notification (see AudioEngineOps.stillHealthy):
+        // the engine is fine — rebuilding here would loop forever, since
+        // every rebuild posts another one.
+        if let format = engineFormat,
+           AudioEngineOps.stillHealthy(changed, sampleRate: format.sampleRate, channelCount: format.channelCount) {
+            log.info("engine survived the configuration change; keeping it")
+            return
+        }
+        teardownEngine()
+        DispatchQueue.main.async {
+            self.isRunning = false
+            self.inputFormat = nil
+            self.onStateChange?()
+        }
+        // Let CoreAudio settle, then rebuild fresh — IF the device still
+        // exists. If it vanished, stay stopped: DetectionCoordinator's
+        // device-list hook rescans (never a silent default-mic fallback).
+        AudioEngineOps.queue.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, !self.stopped, self.engine == nil else { return }
+            guard Self.deviceID(forUID: self.deviceUID) != nil else {
+                self.log.warning("input device \(self.deviceUID, privacy: .public) gone after configuration change; awaiting device rescan")
+                return
+            }
+            self.log.info("rebuilding audio engine after configuration change")
+            self.startEngine()
+        }
+    }
+
+    private func teardownEngine() {
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+            self.configChangeObserver = nil
+        }
+        guard let engine else { return }
+        self.engine = nil
+        self.engineFormat = nil
+        let removeTap = tapInstalled
+        tapInstalled = false
+        AudioEngineOps.bounded {
+            if removeTap { engine.inputNode.removeTap(onBus: 0) }
+            engine.stop()
+        }
     }
 
     // MARK: - CoreAudio helpers

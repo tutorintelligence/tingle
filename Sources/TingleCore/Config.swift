@@ -205,12 +205,12 @@ enum PinnedInput {
     private static let key = "audioInputDeviceUID"
 
     static var uid: String? {
-        get { UserDefaults.standard.string(forKey: key) }
+        get { Prefs.suite.string(forKey: key) }
         set {
             if let newValue {
-                UserDefaults.standard.set(newValue, forKey: key)
+                Prefs.suite.set(newValue, forKey: key)
             } else {
-                UserDefaults.standard.removeObject(forKey: key)
+                Prefs.suite.removeObject(forKey: key)
             }
         }
     }

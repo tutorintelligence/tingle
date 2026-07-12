@@ -78,7 +78,7 @@ enum FirmwareUpgrader {
                 report("Reinstalling the tingle payload…")
                 try Flasher.flashEP(frequencies: frequencies, progress: report)
 
-                UserDefaults.standard.set(version, forKey: "lastFlashedFirmware")
+                Prefs.suite.set(version, forKey: "lastFlashedFirmware")
                 log.info("firmware upgrade to \(version, privacy: .public) complete")
                 DispatchQueue.main.async {
                     completion(.success("Firmware \(version) and the tingle event engine are on the ting."))
