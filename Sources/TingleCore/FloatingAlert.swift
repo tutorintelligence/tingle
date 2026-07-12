@@ -8,6 +8,7 @@ import AppKit
 final class FloatingAlert: NSObject, NSWindowDelegate {
     private static var live: [FloatingAlert] = []
     private let panel: NSPanel
+    private let body: NSTextField
 
     @discardableResult
     static func show(title: String, text: String) -> FloatingAlert {
@@ -25,11 +26,17 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
         panel.close()
     }
 
+    /// Live progress: swap the body text in place (used by Flash EP and
+    /// the firmware flow to stream step updates into one card).
+    func update(text: String) {
+        body.stringValue = text
+    }
+
     private init(title: String, text: String) {
         let width: CGFloat = 400
         let pad: CGFloat = 20
 
-        let body = NSTextField(wrappingLabelWithString: text)
+        body = NSTextField(wrappingLabelWithString: text)
         body.font = .systemFont(ofSize: 12)
         body.preferredMaxLayoutWidth = width - pad * 2
         let bodyHeight = body.sizeThatFits(

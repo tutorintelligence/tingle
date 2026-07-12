@@ -168,7 +168,14 @@ enum Flasher {
         to url: URL,
         sampleRate: Double = 48_000,
         duration: Double = 0.08,   // matches the device _T_SECOND=8 chirp spacing
-        amplitude: Double = 0.30,  // 0.85 clipped hot line-in captures; 40dB+ SNR margin remains
+        // fw 1.0.4's output chain was so hot that 0.85 clipped line-in
+        // captures (hence a long stint at 0.30) — but TE rebalanced levels
+        // across fw 1.0.5-1.0.8 and the same 0.30 landed at -35dBFS on
+        // 1.0.8: fragmented bursts, phantom white/green presses, second-plus
+        // trigger latency (regression, measured 2026-07-11). Near-full-scale
+        // is correct for the 1.0.8 baseline; the decoder's clip tolerance
+        // covers anyone still on old firmware.
+        amplitude: Double = 0.95,
         fadeDuration: Double = 0.010
     ) throws {
         // Assembled by hand as Data (RIFF header + 16-bit PCM) rather than
