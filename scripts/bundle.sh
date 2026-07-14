@@ -82,16 +82,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Hardened runtime is REQUIRED for notarization; the entitlements re-grant
-# mic capture and Apple Events under it. Sign Sparkle's nested code first
-# (its XPC services must each carry hardened runtime), then the app.
+# Hardened runtime + secure timestamps are REQUIRED for notarization; the
+# entitlements re-grant mic capture and Apple Events under the hardened
+# runtime. Sparkle's nested executables are signed inside-out per its
+# distribution docs (the bare Autoupdate binary is the one every first
+# attempt misses — notarization rejects the whole app over it).
 if [ "$IDENTITY" != "-" ]; then
-  find "$APP/Contents/Frameworks/Sparkle.framework" \
-      \( -name "*.xpc" -o -name "*.app" \) -maxdepth 5 | while read -r NESTED; do
-    codesign --force --options runtime --sign "$IDENTITY" "$NESTED"
+  SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+  SIGN=(codesign --force --options runtime --timestamp --sign "$IDENTITY")
+  "${SIGN[@]}" "$SPARKLE/Versions/B/Autoupdate"
+  "${SIGN[@]}" "$SPARKLE/Versions/B/Updater.app"
+  find "$SPARKLE" -name "*.xpc" -maxdepth 5 | while read -r NESTED; do
+    "${SIGN[@]}" "$NESTED"
   done
-  codesign --force --options runtime --sign "$IDENTITY" "$APP/Contents/Frameworks/Sparkle.framework"
-  codesign --force --options runtime \
+  "${SIGN[@]}" "$SPARKLE"
+  codesign --force --options runtime --timestamp \
       --entitlements packaging/entitlements.plist \
       --sign "$IDENTITY" "$APP"
 else
