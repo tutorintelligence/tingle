@@ -9,7 +9,9 @@ name: Auto-release
 #
 # Optional secrets (unsigned local-style build until these exist):
 #   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD  Developer ID signing
-#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD  notarization
+#   NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER_ID  notarization (App Store
+#     Connect API key — the team Apple ID is Microsoft-federated, so
+#     app-specific passwords don't exist for it)
 #   TAP_DEPLOY_KEY  SSH deploy key with write access to tutorintelligence/homebrew-tap
 #   SPARKLE_ED_PRIVATE_KEY  signs update zips for the Sparkle appcast
 on:
@@ -73,16 +75,18 @@ jobs:
           fi
 
       - name: Notarize and staple
-        if: steps.ver.outputs.next != '' && env.NOTARY_APPLE_ID != ''
+        if: steps.ver.outputs.next != '' && env.NOTARY_KEY_ID != ''
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
+          echo "$NOTARY_KEY" > /tmp/notary_key.p8
           ditto -c -k --keepParent dist/tingle.app dist/notarize.zip
-          xcrun notarytool submit dist/notarize.zip --apple-id "$NOTARY_APPLE_ID" \
-            --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD" --wait
+          xcrun notarytool submit dist/notarize.zip --key /tmp/notary_key.p8 \
+            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
           xcrun stapler staple dist/tingle.app
+          rm /tmp/notary_key.p8
 
       - name: Package artifact
         if: steps.ver.outputs.next != ''
