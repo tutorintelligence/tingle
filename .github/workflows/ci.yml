@@ -1,7 +1,8 @@
 name: CI
+# PRs only: main is squash-merge-only, so a push to main is always a tree
+# that just passed this exact suite — re-running it burned a macOS runner
+# per merge for nothing (auto-release does its own version self-test).
 on:
-  push:
-    branches: [main]
   pull_request:
 
 jobs:
