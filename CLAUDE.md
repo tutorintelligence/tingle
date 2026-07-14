@@ -164,5 +164,7 @@ SPARKLE_ED_PRIVATE_KEY repo secret and Josh's login keychain, account
 tutorintelligence/homebrew-tap. `tools/test_next_version.py` covers the
 version math. Until the Apple Developer secrets land the build is unsigned
 but releases still cut. Optional secrets: MACOS_CERT_P12_BASE64,
-MACOS_CERT_PASSWORD, NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD,
-TAP_DEPLOY_KEY (SSH deploy key that pushes the cask bump to tutorintelligence/homebrew-tap).
+MACOS_CERT_PASSWORD, NOTARY_KEY / NOTARY_KEY_ID / NOTARY_ISSUER_ID (App
+Store Connect API key — the team Apple ID is Microsoft-federated, so
+app-specific passwords are unavailable), TAP_DEPLOY_KEY (SSH deploy key
+that pushes the cask bump to tutorintelligence/homebrew-tap).
