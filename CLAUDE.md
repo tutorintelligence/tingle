@@ -125,9 +125,10 @@ dictation, or the device payload. Add a regression test with every bug fix.
   the typing worker converges on the latest hypothesis.
 - TranscriptTyper corrections are bounded to the volatile region; any
   external typing during dictation must freezeVolatile() first.
-- TCC (mic/accessibility) keys off the code signature: ad-hoc rebuilds of
-  the .app re-prompt every time until Developer ID signing lands. The dev
-  binary attributes permissions to the invoking terminal instead.
+- TCC (mic/accessibility) keys off the code signature: release builds are
+  Developer ID-signed so grants persist across updates; ad-hoc .app
+  rebuilds re-prompt every time. The dev binary attributes permissions to
+  the invoking terminal instead.
   PermissionsMonitor owns the UX: "!" icon badge, fix-it menu items, launch
   prompts, and a tccutil-reset repair for the stale-Accessibility-row case.
 
@@ -162,8 +163,10 @@ public key live in scripts/bundle.sh's Info.plist; private key is in the
 SPARKLE_ED_PRIVATE_KEY repo secret and Josh's login keychain, account
 "tingle") → tags → GitHub Release with the .app zip → bumps the cask in
 tutorintelligence/homebrew-tap. `tools/test_next_version.py` covers the
-version math. Until the Apple Developer secrets land the build is unsigned
-but releases still cut. Optional secrets: MACOS_CERT_P12_BASE64,
+version math. Release builds are Developer ID-signed, notarized, and
+stapled (hardened runtime + entitlements in packaging/entitlements.plist;
+Sparkle nested executables signed inside-out — the bare Autoupdate binary
+is the one notarization rejects when missed). Secrets: MACOS_CERT_P12_BASE64,
 MACOS_CERT_PASSWORD, NOTARY_KEY / NOTARY_KEY_ID / NOTARY_ISSUER_ID (App
 Store Connect API key — the team Apple ID is Microsoft-federated, so
 app-specific passwords are unavailable), TAP_DEPLOY_KEY (SSH deploy key

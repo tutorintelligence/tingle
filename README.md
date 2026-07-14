@@ -32,9 +32,11 @@ You need:
 2. **A USB line-in adapter.** The ting's curly cable outputs *line-level*
    audio, and Mac headphone jacks don't accept line-in — plugging the ting
    straight into your laptop's 3.5mm port will not work. Any USB audio
-   interface with a line input is fine; a cheap one that works well is the
+   interface with a line input is fine; two that are tested and work well:
+   the [Sonos Line-In adapter](https://www.bhphotovideo.com/c/product/1754583-REG/sonos_ldnglww1blk_sonos_line_in_adapter.html)
+   (smallest option — a bare USB-C dongle) and the
    [Cubilux USB-C line-in adapter](https://www.amazon.com/dp/B0CNCL21RR)
-   (line-in + mic-in + headphone-out on one USB-C plug).
+   (bulkier; adds mic-in + headphone-out).
 3. Optionally, **a USB-C cable** to the ting for docked use (instant button
    events, battery readout) and for the one-time flash.
 
@@ -48,15 +50,6 @@ volume knob under the ting's lid up to around halfway.
 ```sh
 brew install --cask tutorintelligence/tap/tingle
 ```
-
-tingle isn't code-signed yet (Apple Developer enrollment in progress).
-macOS tags downloaded apps with a quarantine flag so Gatekeeper can vet
-them on first launch — and unsigned apps fail that check with "Apple
-could not verify tingle is free of malware". The cask therefore removes
-the quarantine flag after install. If you'd rather keep Gatekeeper in
-the loop, build from source below instead, then approve the app under
-System Settings → Privacy & Security → "Open Anyway". Once signing
-lands, none of this applies.
 
 ### Install from source
 
