@@ -72,6 +72,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>3BlTef+CpeHVRaFJfuvpqt1XGbVZe1HDPo3C127U70E=</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>tingle's summon-agent button brings your coding app to the front.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>tingle listens to your line-in to detect the ting's ultrasonic signals and to transcribe dictation from its microphone.</string>
     <key>NSHumanReadableCopyright</key>
@@ -80,5 +82,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign "$IDENTITY" "$APP"
+# Hardened runtime is REQUIRED for notarization; the entitlements re-grant
+# mic capture and Apple Events under it. Sign Sparkle's nested code first
+# (its XPC services must each carry hardened runtime), then the app.
+if [ "$IDENTITY" != "-" ]; then
+  find "$APP/Contents/Frameworks/Sparkle.framework" \
+      \( -name "*.xpc" -o -name "*.app" \) -maxdepth 5 | while read -r NESTED; do
+    codesign --force --options runtime --sign "$IDENTITY" "$NESTED"
+  done
+  codesign --force --options runtime --sign "$IDENTITY" "$APP/Contents/Frameworks/Sparkle.framework"
+  codesign --force --options runtime \
+      --entitlements packaging/entitlements.plist \
+      --sign "$IDENTITY" "$APP"
+else
+  codesign --force --deep --sign "$IDENTITY" "$APP"
+fi
 echo "built $APP (version $VERSION, signed: $IDENTITY)"
