@@ -180,18 +180,19 @@ summon-agent script.
 ## Distribution
 
 `scripts/bundle.sh` assembles `tingle.app` (SwiftPM release build + Info.plist
-+ resource bundle). Release flow (`.github/workflows/release.yml`): tag →
-tests → Developer ID sign → notarize → GitHub Release → bump the cask
-(template: [packaging/tingle.rb](packaging/tingle.rb)) in
-`tutorintelligence/homebrew-tap`. Blocked on Apple Developer enrollment; until
-then ad-hoc signing re-prompts TCC on every rebuild.
++ resource bundle) and signs it: Developer ID with hardened runtime, secure
+timestamps, and entitlements (mic, Apple Events); Sparkle's nested
+executables are signed inside-out. Release flow
+(`.github/workflows/auto-release.yml`, on every push to main): version from
+the merge subject → build → sign → notarize + staple → Sparkle-signed
+appcast → GitHub Release → bump the cask in `tutorintelligence/homebrew-tap`.
+The stable signing identity is what lets TCC grants survive updates.
 
 ## Roadmap
 
 1. Custom language model (`SFCustomLanguageModelData`: phrases, templates,
    custom pronunciations) for domain adaptation beyond contextual strings.
-2. Apple Developer enrollment → signing/notarization/tap → first release.
-3. Exploration: the firmware's ADC event messages (type 0x1X) may carry
+2. Exploration: the firmware's ADC event messages (type 0x1X) may carry
    higher-rate handle data (merged-tap recovery, analog gestures).
 
 ## Device reference (fw 1.0.4, all measured on hardware)
