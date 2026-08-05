@@ -210,7 +210,11 @@ The stable signing identity is what lets TCC grants survive updates.
   1/2 with val 0=white, 1=green, 2=orange (green/orange act only with the
   handle released). ADC events are type 0x1X (unused).
 - Line out 2 VRMS, scaled by the volume knob; the engine reproduces up to
-  19kHz at full level. Factory FX presets inject sample playback after
-  pitch effects, so tones survive PIXIE/ROBOT.
+  19kHz at full level. Factory FX presets can pitch-shift or attenuate the
+  ultrasonic chirps (a mangled chirp measured ~80dB below a clean one) — so
+  FLASH EP writes a `config.json` with four DRY (`SAMPLE`-only) presets:
+  the orange button cycles the active preset, and dry presets keep every
+  one of them chirp-safe. Without it, green/orange decoded over USB (which
+  bypasses audio) but not over the 3.5mm chirp path.
 - Green/orange state changes commit ~10 ticks (~164ms) after the press
   (stock priming debounce).

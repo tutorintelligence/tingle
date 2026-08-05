@@ -65,7 +65,9 @@ dictation, or the device payload. Add a regression test with every bug fix.
   firmware…"): lower lid off, USB attached, HOLD the handle the whole
   time, and while holding, DOUBLE-CLICK the small button above the USB
   port -> "TING BOOT" volume appears; drop the .uf2 there. NOT the
-  power-ritual button dance.
+  power-ritual button dance. The double-click must be two RAPID presses
+  (mouse-double-click speed) — two deliberate presses just power-cycle
+  (cost a failed flow, 2026-08-05).
 - Never present NSAlert.runModal() — a modal session parks the main run
   loop and freezes dictation/serial/menu while open. Use FloatingAlert.
 - Serial REPL access (`/dev/cu.usbmodemEPTXP*`, 115200): `\r\x03\x03`

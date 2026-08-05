@@ -424,7 +424,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // its running version over USB).
         let docked = lastBackendState == .connectedSerial || Flasher.isTingleiskMounted
         if !isFlashing, docked {
-            let flashed = Prefs.suite.string(forKey: "lastFlashedFirmware")
+            let flashed = Prefs.lastFlashedFirmware(serial: FirmwareUpgrader.dockedSerial())
             if flashed == FirmwareUpgrader.version {
                 firmwareItem.title = "ting firmware \(FirmwareUpgrader.version) (latest)"
                 firmwareItem.isEnabled = false
@@ -438,6 +438,24 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func flashEP() {
+        // A ting on unknown/old firmware corrupts its own chirp words over
+        // the audio path (the stock engine plays slot samples on squeeze/
+        // buttons; fw 1.0.8 fixes it — root-caused 2026-08-05). Flashing a
+        // payload onto unknown firmware produces a device that half-works,
+        // so route first-time devices through the full setup: firmware
+        // ritual, then the payload flash rides on the end of that flow.
+        if Prefs.lastFlashedFirmware(serial: FirmwareUpgrader.dockedSerial()) != FirmwareUpgrader.version {
+            FloatingAlert.show(
+                title: "New ting — firmware first",
+                text: """
+                tingle hasn't seen this ting on firmware \(FirmwareUpgrader.version) yet, and older \
+                firmware corrupts the button signals over the audio cable. Starting the \
+                firmware upgrade — it installs the tingle payload at the end, so this is \
+                the whole setup in one flow.
+                """)
+            upgradeFirmware()
+            return
+        }
         runFlasherOperation(.flash(frequencies: configStore.config.toneFrequencies), title: "Flash EP")
     }
 
@@ -449,7 +467,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// BOOT disk shows up (or the flow ends).
     private var firmwareInstructions: FloatingAlert?
 
+    private var firmwareFlowRunning = false
+
     @objc private func upgradeFirmware() {
+        // One flow at a time: a re-click while a previous attempt is still
+        // waiting for the boot disk raced two flows — the stale one's
+        // "failed" popup landed next to the new one's "succeeded"
+        // (2026-08-05).
+        guard !firmwareFlowRunning else { return }
+        firmwareFlowRunning = true
         // Same live-status plumbing as Flash EP, but the operation also
         // spans the guided bootloader dance and firmware write. A one-line
         // menu ticker can't teach a four-step ritual, so a floating card
@@ -461,8 +487,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             1.  Take off the ting's lower lid. Keep USB connected.
             2.  Squeeze the handle — and KEEP IT SQUEEZED through every \
             step until this card disappears.
-            3.  Still squeezing, double-click the small button above the \
-            USB port.
+            3.  Still squeezing, DOUBLE-CLICK the small button above the \
+            USB port — two quick presses in rapid succession, like a \
+            mouse double-click. (Two slow separate presses just \
+            power-cycles it.)
             4.  A disk named TING BOOT appears and tingle does the rest — \
             you can let go when this card closes.
             """, showsOK: false)
@@ -484,6 +512,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         } completion: { [weak self] result in
             guard let self else { return }
+            self.firmwareFlowRunning = false
             self.firmwareInstructions?.close()
             self.firmwareInstructions = nil
             self.flashProgress?.close()

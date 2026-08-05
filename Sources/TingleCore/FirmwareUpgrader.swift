@@ -45,7 +45,7 @@ enum FirmwareUpgrader {
             case .unzipFailed:
                 return "Could not extract the firmware from Teenage Engineering's zip."
             case .bootloaderTimeout:
-                return "Never saw the TING BOOT disk. The trick is to KEEP the handle squeezed the whole time: lid off, USB connected, squeeze and hold, and while still holding, double-click the small button above the USB port. Run the upgrade again to retry."
+                return "Never saw the TING BOOT disk. Two things trip people up: KEEP the handle squeezed the whole time, and the button needs a true DOUBLE-CLICK — two quick presses in rapid succession, like a mouse double-click (two deliberate separate presses just power-cycle it). Lid off, USB connected, squeeze and hold, double-click the small button above the USB port. Run the upgrade again to retry."
             case .tingdiskTimeout:
                 return "Firmware was written, but TINGDISK didn't come back. Power-cycle the ting and run Flash EP from the menu."
             }
@@ -78,7 +78,7 @@ enum FirmwareUpgrader {
                 report("Reinstalling the tingle payload…")
                 try Flasher.flashEP(frequencies: frequencies, progress: report)
 
-                Prefs.suite.set(version, forKey: "lastFlashedFirmware")
+                Prefs.setLastFlashedFirmware(version, serial: dockedSerial())
                 log.info("firmware upgrade to \(version, privacy: .public) complete")
                 DispatchQueue.main.async {
                     completion(.success("Firmware \(version) and the tingle event engine are on the ting."))
@@ -88,6 +88,14 @@ enum FirmwareUpgrader {
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }
+    }
+
+    /// Identity of the docked ting: the unique suffix of its CDC device
+    /// path (e.g. /dev/cu.usbmodemEPTXP3R31 -> "EPTXP3R31"). Nil when no
+    /// ting is enumerated over USB.
+    static func dockedSerial() -> String? {
+        DetectionCoordinator.findSerialDevicePath()
+            .map { $0.replacingOccurrences(of: "/dev/cu.usbmodem", with: "") }
     }
 
     // MARK: - Steps

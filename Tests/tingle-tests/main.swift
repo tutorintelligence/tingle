@@ -109,6 +109,64 @@ func expectEqual<T: Equatable>(_ a: T, _ b: T, _ label: String,
 }
 
 runTranscriptTyperTests()
+// --decode-wav <file.wav> [channel]: run the PRODUCTION SymbolDetector over
+// a raw line-in recording and print every decode with timestamps — for
+// diagnosing field captures against known ground truth.
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--decode-wav" {
+    let data = try! Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
+    let channel = CommandLine.arguments.count >= 4 ? Int(CommandLine.arguments[3])! : 0
+    // minimal RIFF parse: find 'data' chunk, assume 16-bit PCM
+    let bytes = [UInt8](data)
+    var offset = 12
+    var pcmStart = 0, pcmLen = 0
+    var channels = 1
+    while offset + 8 < bytes.count {
+        let id = String(bytes: bytes[offset..<offset+4], encoding: .ascii)!
+        let size = Int(bytes[offset+4]) | Int(bytes[offset+5]) << 8 | Int(bytes[offset+6]) << 16 | Int(bytes[offset+7]) << 24
+        if id == "fmt " { channels = Int(bytes[offset+10]) | Int(bytes[offset+11]) << 8 }
+        if id == "data" { pcmStart = offset + 8; pcmLen = size; break }
+        offset += 8 + size + (size & 1)
+    }
+    print("channels=\(channels) pcmBytes=\(pcmLen)")
+    var samples: [Float] = []
+    samples.reserveCapacity(pcmLen / (2 * channels))
+    var i = pcmStart + channel * 2
+    while i + 1 < pcmStart + pcmLen {
+        let v = Int16(bitPattern: UInt16(bytes[i]) | UInt16(bytes[i+1]) << 8)
+        samples.append(Float(v) / 32768.0)
+        i += 2 * channels
+    }
+    print("samples=\(samples.count) (\(Double(samples.count)/48000.0)s)")
+    var detector = SymbolDetector()
+    var clock = 0
+    for start in stride(from: 0, to: samples.count, by: 4096) {
+        let chunk = Array(samples[start..<min(start + 4096, samples.count)])
+        let events = detector.process(samples: chunk)
+        clock = start + chunk.count
+        let t = Double(clock) / 48000.0
+        for line in detector.drainDiagnostics() {
+            print(String(format: "%7.2fs  %@", t, line))
+        }
+        for event in events {
+            print(String(format: "%7.2fs  EVENT %@", t, event.logDescription))
+        }
+    }
+    exit(0)
+}
+
+// --dump-flash-bytes <dir>: write the exact bytes Flash EP ships (WAVs +
+// config.json) for independent cross-checking against the on-device copies.
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--dump-flash-bytes" {
+    let dir = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    for i in 0..<4 {
+        try! Flasher.symbolWAV(symbol: i).write(to: dir.appendingPathComponent("\(i + 1).wav"))
+    }
+    try! Flasher.configJSON().write(to: dir.appendingPathComponent("config.json"))
+    print("dumped flash bytes to \(dir.path)")
+    exit(0)
+}
+
 runConfigTests()
 runTriggerReconcilerTests()
 runTriggerRoutingTests()
@@ -119,6 +177,7 @@ runSymbolDetectorTests()
 runBeaconScannerTests()
 runGuardrailTests()
 runRewriteTests()
+runFlasherTests()
 runAudioEngineOpsTests()
 runAudioHardwareTests()
 

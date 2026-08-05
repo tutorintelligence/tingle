@@ -2,12 +2,15 @@ import AppKit
 import AVFoundation
 import os
 
-/// FLASH EP: writes mode-tone WAVs plus the tingle event engine (main.py — the
+/// FLASH EP: writes the chirp WAVs, a dry-bus config.json (so FX presets
+/// never mangle the chirps), and the tingle event engine (main.py — the
 /// ting executes /fat/main.py at boot, see DESIGN.md "key discovery") to the
-/// TINGDISK volume, with backup of what was there, cleans up AppleDouble junk,
-/// and ejects. "Restore stock" deletes the overrides instead — without
-/// main.py and 1-4.wav the device is 100% stock.
-enum Flasher {
+/// TINGDISK volume. Every write is read back and verified before the eject,
+/// so a truncated or failed flash fails loudly instead of leaving a device
+/// that reports success but doesn't work. Backs up what was there, cleans up
+/// AppleDouble junk, ejects. "Restore stock" deletes the overrides instead —
+/// without main.py and 1-4.wav the device is 100% stock.
+public enum Flasher {
     static let volumeURL = URL(fileURLWithPath: "/Volumes/TINGDISK", isDirectory: true)
 
     private static let sampleFileNames = ["1.wav", "2.wav", "3.wav", "4.wav"]
@@ -21,6 +24,7 @@ enum Flasher {
         case wrongFrequencyCount
         case payloadMissing
         case ejectFailed(String)
+        case verificationFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -34,7 +38,61 @@ enum Flasher {
                 return "Config must define exactly 4 tone frequencies."
             case .payloadMissing:
                 return "The tingle_main.py device payload is missing from the app's resources."
+            case .verificationFailed(let detail):
+                return "Flash verification failed — \(detail). Re-seat the ting over USB and flash again."
             }
+        }
+    }
+
+    /// The device config.json: four sample slots mapped to the chirp WAVs,
+    /// and four DRY presets (SAMPLE effect only). The dry bus is load-
+    /// bearing, not cosmetic: the orange button cycles the active preset,
+    /// and any factory FX preset (pitch-shift, lo-fi, telephone) mangles or
+    /// attenuates the ultrasonic chirps — measured as button chirps landing
+    /// ~80dB below the beacons, so green/orange never decoded over the 3.5mm
+    /// audio path (they were fine over USB, which bypasses audio). Four dry
+    /// presets mean every preset the orange button can select plays the
+    /// chirp clean. Kept minimal + ASCII on purpose.
+    public static func configJSON() -> Data {
+        var presets = ""
+        for pos in 0..<4 {
+            presets += """
+            {"pos":\(pos),"list":[{"effect":"SAMPLE"}],"trigger":{"row":0}}\(pos < 3 ? "," : "")
+            """
+        }
+        var samples = ""
+        for pos in 0..<4 {
+            samples += """
+            {"pos":\(pos),"file":"\(pos + 1).wav","playmode":"oneshot"}\(pos < 3 ? "," : "")
+            """
+        }
+        let json = "{\"name\":\"tingle passthrough\",\"samples\":[\(samples)],\"presets\":[\(presets)]}"
+        return Data(json.utf8)
+    }
+
+    /// Pure comparison for the write-verification (unit-tested): returns a
+    /// human-readable mismatch reason, or nil when the read-back is exact.
+    public static func verificationMismatch(label: String, expected: Data, actual: Data) -> String? {
+        if expected.count != actual.count {
+            return "\(label) wrote \(expected.count) bytes but \(actual.count) landed on the device"
+        }
+        if expected != actual {
+            return "\(label) content did not match after write-back"
+        }
+        return nil
+    }
+
+    /// Write `data` to `url`, then read it straight back and fail loudly on
+    /// any mismatch — the safety net that turns a truncated/failed/reverted
+    /// flash (which used to report success and leave a dead device) into a
+    /// clear, actionable error.
+    private static func writeVerified(_ data: Data, to url: URL, label: String) throws {
+        try? FileManager.default.removeItem(at: url)
+        try data.write(to: url)
+        let actual = try Data(contentsOf: url)
+        if let reason = verificationMismatch(label: label, expected: data, actual: actual) {
+            log.error("verification failed: \(reason, privacy: .public)")
+            throw FlasherError.verificationFailed(reason)
         }
     }
 
@@ -114,31 +172,33 @@ enum Flasher {
         progress("Backing up disk contents…")
         try backupExisting()
 
-        let fm = FileManager.default
         // Coded chirp symbols from SymbolSet (the config's toneFrequencies
         // are ignored — symbol shapes are the air-gap contract between
-        // Flasher and SymbolDetector).
+        // Flasher and SymbolDetector). Every write is read back and verified.
         for index in 0..<4 {
             progress("Writing symbol \(index + 1) of 4…")
             let url = volumeURL.appendingPathComponent("\(index + 1).wav")
-            try? fm.removeItem(at: url)
-            try writeSymbolWAV(symbol: index, to: url)
+            try writeVerified(symbolWAV(symbol: index), to: url, label: "\(index + 1).wav")
             let sweep = SymbolSet.sweeps[index]
             log.info("wrote \(url.lastPathComponent, privacy: .public) chirp \(Int(sweep.start))->\(Int(sweep.end))Hz")
         }
 
-        progress("Writing event engine (main.py)…")
-        let mainPyURL = volumeURL.appendingPathComponent("main.py")
-        try? fm.removeItem(at: mainPyURL)
-        try payload.write(to: mainPyURL)
-        log.info("wrote main.py event engine (\(payload.count) bytes)")
+        // Dry-bus FX presets so the orange button can never select a preset
+        // that mangles the chirps (see configJSON()).
+        progress("Writing FX presets (config.json)…")
+        try writeVerified(configJSON(), to: volumeURL.appendingPathComponent("config.json"),
+                          label: "config.json")
 
-        // TODO: also ship a config.json with dry-bus FX presets so symbols
-        // bypass the active FX preset; today the device config.json is left alone
-        // (pitch-shifting presets like PIXIE/ROBOT mangle the tones — see
-        // DESIGN.md "Known limitation").
+        progress("Writing event engine (main.py)…")
+        try writeVerified(payload, to: volumeURL.appendingPathComponent("main.py"), label: "main.py")
+        log.info("wrote main.py event engine (\(payload.count) bytes), verified")
 
         removeAppleDoubleFiles()
+        // Flush the FAT to the device before ejecting: a read-back can be
+        // served from the page cache, so sync is what actually commits the
+        // bytes to the ting's flash.
+        progress("Flushing…")
+        syncVolume()
         progress("Ejecting TINGDISK…")
         try eject()
     }
@@ -168,10 +228,11 @@ enum Flasher {
     /// Duration stays 80ms: the event engine triggers a chirp's second
     /// burst ~114ms after the first (fw 1.0.8 ticks), relying on the
     /// sample having finished.
-    static func writeSymbolWAV(symbol: Int, to url: URL) throws {
-        // Assembled by hand as Data (RIFF header + 16-bit PCM) rather than
-        // via AVAudioFile: no file handle stays open on the volume, so the
-        // eject that follows can't hit fBsyErr from our own writer.
+    /// One coded chirp symbol as a mono 16-bit WAV (RIFF header + PCM),
+    /// assembled by hand as Data — no file handle stays open on the volume,
+    /// so the eject can't hit fBsyErr from our own writer. Pure, so the
+    /// exact bytes can be verified after writing.
+    public static func symbolWAV(symbol: Int) -> Data {
         let sampleRate = SymbolSet.sampleRate
         var pcm = Data(capacity: SymbolSet.frameCount * 2)
         for value in SymbolSet.pcm(symbol: symbol) {
@@ -194,7 +255,7 @@ enum Flasher {
         append("data"); append32(UInt32(pcm.count))
         wav.append(pcm)
 
-        try wav.write(to: url)
+        return wav
     }
 
     // MARK: - Volume housekeeping
@@ -234,6 +295,14 @@ enum Flasher {
         for name in names where name.hasPrefix("._") {
             try? fm.removeItem(at: volumeURL.appendingPathComponent(name))
         }
+    }
+
+    /// Flush filesystem buffers to the physical device before ejecting.
+    private static func syncVolume() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sync")
+        try? task.run()
+        task.waitUntilExit()
     }
 
     private static func eject() throws {

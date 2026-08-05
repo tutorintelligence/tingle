@@ -19,6 +19,7 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
         live.append(alert)
         alert.panel.center()
         alert.panel.makeKeyAndOrderFront(nil)
+        alert.panel.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         return alert
     }
@@ -61,7 +62,14 @@ final class FloatingAlert: NSObject, NSWindowDelegate {
             defer: false
         )
         panel.title = "tingle"
-        panel.level = .floating
+        // Guidance cards must survive the user working elsewhere: NSPanel
+        // HIDES on app deactivate by default, which made the firmware-
+        // ritual card vanish the moment focus moved (user left squeezing
+        // the handle with no instructions). Stick above everything, on
+        // every Space.
+        panel.level = .statusBar
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
 
         super.init()

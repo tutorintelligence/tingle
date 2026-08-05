@@ -43,6 +43,11 @@ You need:
 Wiring: ting line-out → adapter **line-in** port → Mac USB. Turn the green
 volume knob under the ting's lid up to around halfway.
 
+**Setting up a new ting:** dock it over USB and click **Flash EP** in the
+tingle menu — for a ting tingle hasn't seen before, this runs the guided
+firmware upgrade first (shipped firmware corrupts the button signals over
+the audio cable) and installs everything in one flow.
+
 ## Getting started
 
 ### Install with Homebrew (recommended)
