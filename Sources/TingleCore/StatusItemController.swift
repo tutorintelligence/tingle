@@ -445,15 +445,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // so route first-time devices through the full setup: firmware
         // ritual, then the payload flash rides on the end of that flow.
         if Prefs.lastFlashedFirmware(serial: FirmwareUpgrader.dockedSerial()) != FirmwareUpgrader.version {
-            FloatingAlert.show(
-                title: "New ting — firmware first",
-                text: """
-                tingle hasn't seen this ting on firmware \(FirmwareUpgrader.version) yet, and older \
-                firmware corrupts the button signals over the audio cable. Starting the \
-                firmware upgrade — it installs the tingle payload at the end, so this is \
-                the whole setup in one flow.
-                """)
-            upgradeFirmware()
+            startFirmwareUpgrade(newDevice: true)
             return
         }
         runFlasherOperation(.flash(frequencies: configStore.config.toneFrequencies), title: "Flash EP")
@@ -470,6 +462,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var firmwareFlowRunning = false
 
     @objc private func upgradeFirmware() {
+        startFirmwareUpgrade(newDevice: false)
+    }
+
+    /// `newDevice` = routed here by Flash EP because tingle has never
+    /// flashed \(FirmwareUpgrader.version) onto this ting. The ritual card
+    /// says so in its title rather than stacking a second popup on top of
+    /// it — one card, one instruction set.
+    private func startFirmwareUpgrade(newDevice: Bool) {
         // One flow at a time: a re-click while a previous attempt is still
         // waiting for the boot disk raced two flows — the stale one's
         // "failed" popup landed next to the new one's "succeeded"
@@ -482,7 +482,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // carries the steps until the boot disk appears.
         firmwareInstructions?.close()
         firmwareInstructions = FloatingAlert.show(
-            title: "Put the ting in firmware mode",
+            title: newDevice
+                ? "New ting — firmware upgrade first"
+                : "Put the ting in firmware mode",
             text: """
             1.  Take off the ting's lower lid. Keep USB connected.
             2.  Squeeze the handle — and KEEP IT SQUEEZED through every \
@@ -506,9 +508,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 self?.firmwareInstructions?.close()
                 self?.firmwareInstructions = nil
                 self?.flashProgress?.close()
-                self?.flashProgress = FloatingAlert.show(title: "Upgrading firmware", text: step, showsOK: false)
+                self?.flashProgress = FloatingAlert.show(
+                    title: "Upgrading firmware",
+                    text: FirmwareUpgrader.progressText(step: step), showsOK: false)
             } else {
-                self?.flashProgress?.update(text: step)
+                self?.flashProgress?.update(text: FirmwareUpgrader.progressText(step: step))
             }
         } completion: { [weak self] result in
             guard let self else { return }

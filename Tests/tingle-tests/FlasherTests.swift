@@ -54,6 +54,20 @@ func runFlasherTests() {
            "prefs: no serial means unknown firmware")
     Prefs.suite.removeObject(forKey: "lastFlashedFirmware.TESTSERIALA")
 
+    // --- firmware flow copy: the hold reminder is on EVERY progress card
+    // (a bare step line left the user guessing whether to let go) ---
+    for step in ["Writing firmware…", "Waiting for the ting to come back…",
+                 "Reinstalling the tingle payload…", "Writing symbol 1 of 4…"] {
+        let text = FirmwareUpgrader.progressText(step: step)
+        expect(text.contains(FirmwareUpgrader.holdReminder),
+               "firmware: hold reminder present on '\(step)'")
+        expect(text.contains(step), "firmware: step text preserved on '\(step)'")
+    }
+    expect(FirmwareUpgrader.holdReminder.contains("DO NOT RELEASE"),
+           "firmware: reminder states the do-not-release rule")
+    expect(FirmwareUpgrader.holdReminder.allSatisfy { $0.isASCII },
+           "firmware: reminder is ASCII")
+
     // --- symbol WAV shape (25ms mono 16-bit @48k = 44 header + 2400 pcm) ---
     let wav = Flasher.symbolWAV(symbol: 0)
     expect(wav.count == 2444, "flasher: symbol WAV is 2444 bytes")

@@ -25,6 +25,7 @@ public enum Flasher {
         case payloadMissing
         case ejectFailed(String)
         case verificationFailed(String)
+        case volumeNotWritable
 
         var errorDescription: String? {
             switch self {
@@ -40,6 +41,8 @@ public enum Flasher {
                 return "The tingle_main.py device payload is missing from the app's resources."
             case .verificationFailed(let detail):
                 return "Flash verification failed — \(detail). Re-seat the ting over USB and flash again."
+            case .volumeNotWritable:
+                return "TINGDISK mounted but never accepted writes. Unplug the ting, plug it back in, and flash again."
             }
         }
     }
@@ -126,6 +129,34 @@ public enum Flasher {
             && isDirectory.boolValue
     }
 
+    /// Mounted AND actually accepting writes. The volume appears in
+    /// /Volumes the instant macOS begins mounting it — after the firmware
+    /// reboot it is briefly present but not yet writable, and the first
+    /// WAV write then dies with "You don't have permission to save the
+    /// file 1.wav" (2026-08-05). Existence is not readiness; probe.
+    static var isTingleiskWritable: Bool {
+        guard isTingleiskMounted else { return false }
+        let probe = volumeURL.appendingPathComponent(".tingle-write-probe")
+        do {
+            try Data([0]).write(to: probe)
+            try? FileManager.default.removeItem(at: probe)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Block until the volume accepts writes. Returns false on timeout.
+    @discardableResult
+    static func waitForWritableVolume(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if isTingleiskWritable { return true }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return isTingleiskWritable
+    }
+
     // MARK: - Entry points
 
     enum Operation {
@@ -168,6 +199,15 @@ public enum Flasher {
         guard isTingleiskMounted else { throw FlasherError.volumeNotMounted }
         guard frequencies.count == 4 else { throw FlasherError.wrongFrequencyCount }
         let payload = try devicePayload()  // fail before touching the disk
+        // A just-remounted volume (firmware reboot, or a re-plug) can be
+        // present but not yet writable; wait it out instead of failing on
+        // the first WAV with a raw permission error.
+        if !isTingleiskWritable {
+            progress("Waiting for TINGDISK to accept writes…")
+            guard waitForWritableVolume(timeout: 30) else {
+                throw FlasherError.volumeNotWritable
+            }
+        }
 
         progress("Backing up disk contents…")
         try backupExisting()

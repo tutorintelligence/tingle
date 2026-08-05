@@ -20,14 +20,25 @@ import os
 ///
 /// Why upgrade at all: fw <= 1.0.5 reloads factory samples after battery
 /// sleep (silencing the chirp protocol); 1.0.6+ fixes it at the source.
-enum FirmwareUpgrader {
+public enum FirmwareUpgrader {
     /// Latest firmware verified against the tingle payload.
-    static let version = "1.0.8"
+    public static let version = "1.0.8"
     private static let zipURL = URL(string: "https://teenage.engineering/_software/ep-2350/ep-2350_firmware_1_0_8.zip")!
     private static let zipSHA256 = "d616d4eb35d8f40b0c48fe6bc95f3156d720822fc3619a3d78e880c8b9d0cf18"
     private static let uf2Name = "ep-2350_firmware_1_0_8.uf2"
 
     private static let log = Logger(subsystem: Log.subsystem, category: "firmware")
+
+    /// Rides on EVERY progress card in this flow. The ritual needs the
+    /// handle held from before the boot disk appears until the flow says
+    /// otherwise, and a bare step line left the user guessing whether it
+    /// was safe to let go mid-upgrade (2026-08-05).
+    public static let holdReminder =
+        "KEEP THE TRIGGER HELD DOWN - DO NOT RELEASE UNTIL INSTRUCTED"
+
+    public static func progressText(step: String) -> String {
+        "\(holdReminder)\n\n\(step)"
+    }
 
     enum UpgradeError: LocalizedError {
         case downloadFailed(String)
@@ -81,7 +92,7 @@ enum FirmwareUpgrader {
                 Prefs.setLastFlashedFirmware(version, serial: dockedSerial())
                 log.info("firmware upgrade to \(version, privacy: .public) complete")
                 DispatchQueue.main.async {
-                    completion(.success("Firmware \(version) and the tingle event engine are on the ting."))
+                    completion(.success("You can release the handle now.\n\nFirmware \(version) and the tingle event engine are on the ting."))
                 }
             } catch {
                 log.error("firmware upgrade failed: \(String(describing: error))")
@@ -163,10 +174,13 @@ enum FirmwareUpgrader {
         }
     }
 
+    /// Waits for WRITABILITY, not mere presence: the volume reappears
+    /// before the mount is usable, and the payload flash that follows was
+    /// failing on "1.wav ... permission" (2026-08-05).
     private static func waitForTingdisk(timeout: TimeInterval) throws -> URL {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if Flasher.isTingleiskMounted { return Flasher.volumeURL }
+            if Flasher.isTingleiskWritable { return Flasher.volumeURL }
             Thread.sleep(forTimeInterval: 0.5)
         }
         throw UpgradeError.tingdiskTimeout
