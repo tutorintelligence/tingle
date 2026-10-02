@@ -424,9 +424,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // its running version over USB).
         let docked = lastBackendState == .connectedSerial || Flasher.isTingleiskMounted
         if !isFlashing, docked {
-            let flashed = Prefs.lastFlashedFirmware(serial: FirmwareUpgrader.dockedSerial())
-            if flashed == FirmwareUpgrader.version {
-                firmwareItem.title = "ting firmware \(FirmwareUpgrader.version) (latest)"
+            if FirmwareUpgrader.isFirmwareCurrent() {
+                let shown = FirmwareUpgrader.runningVersion() ?? FirmwareUpgrader.version
+                firmwareItem.title = "ting firmware \(shown) (latest)"
                 firmwareItem.isEnabled = false
             } else {
                 firmwareItem.title = "Upgrade ting firmware to \(FirmwareUpgrader.version)…"
@@ -444,7 +444,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // payload onto unknown firmware produces a device that half-works,
         // so route first-time devices through the full setup: firmware
         // ritual, then the payload flash rides on the end of that flow.
-        if Prefs.lastFlashedFirmware(serial: FirmwareUpgrader.dockedSerial()) != FirmwareUpgrader.version {
+        if !FirmwareUpgrader.isFirmwareCurrent() {
             startFirmwareUpgrade(newDevice: true)
             return
         }

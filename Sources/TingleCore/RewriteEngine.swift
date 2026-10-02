@@ -136,7 +136,7 @@ public enum RewritePrompt {
             return String(format: "word retention %.2f < 0.35", r)
         }
         if let word = censoredProfanity(input: input, output: out) {
-            return "censored '\(word)'"
+            return "censored '\(Log.transcript(word))'"
         }
         if let marker = refusalMarker(input: input, output: out) {
             return "refusal boilerplate '\(marker)'"

@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import IOKit
 import os
 
 /// Guided ting firmware upgrade. The RP2350's bootloader is ROM-resident,
@@ -46,6 +47,8 @@ public enum FirmwareUpgrader {
         case unzipFailed
         case bootloaderTimeout
         case tingdiskTimeout
+        case wrongVariant(String)
+        case alreadyNewer(String)
 
         var errorDescription: String? {
             switch self {
@@ -59,6 +62,10 @@ public enum FirmwareUpgrader {
                 return "Never saw the TING BOOT disk. Two things trip people up: KEEP the handle squeezed the whole time, and the button needs a true DOUBLE-CLICK — two quick presses in rapid succession, like a mouse double-click (two deliberate separate presses just power-cycle it). Lid off, USB connected, squeeze and hold, double-click the small button above the USB port. Run the upgrade again to retry."
             case .tingdiskTimeout:
                 return "Firmware was written, but TINGDISK didn't come back. Power-cycle the ting and run Flash EP from the menu."
+            case .wrongVariant(let volume):
+                return "\(volume) is an FX MIC bootloader, but tingle's pinned firmware \(version) is the ting build. Nothing was written. Release the handle and power-cycle the device."
+            case .alreadyNewer(let running):
+                return "This device already runs firmware \(running), newer than tingle's pinned \(version). Nothing was written."
             }
         }
     }
@@ -74,11 +81,21 @@ public enum FirmwareUpgrader {
         let report: (String) -> Void = { text in DispatchQueue.main.async { status(text) } }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                if let running = runningVersion(), isVersion(running, atLeast: version),
+                   running != version {
+                    throw UpgradeError.alreadyNewer(running)
+                }
+
                 report("Downloading firmware \(version)…")
                 let uf2 = try fetchUF2()
 
                 report("Waiting for the TING BOOT disk (keep squeezing the handle)…")
                 let bootVolume = try waitForBootloaderVolume(timeout: 180)
+                // TE ships separate ting and FX MIC builds since 1.1.x; the
+                // pinned image predates the split and targets the ting.
+                if bootVolume.lastPathComponent.uppercased().contains("FX MIC") {
+                    throw UpgradeError.wrongVariant(bootVolume.lastPathComponent)
+                }
 
                 report("Writing firmware…")
                 try writeUF2(uf2, to: bootVolume)
@@ -107,6 +124,73 @@ public enum FirmwareUpgrader {
     static func dockedSerial() -> String? {
         DetectionCoordinator.findSerialDevicePath()
             .map { $0.replacingOccurrences(of: "/dev/cu.usbmodem", with: "") }
+    }
+
+    /// The CDC port is named after the USB serial number, which starts
+    /// with "EP" but varies by product variant: the ting enumerates as
+    /// cu.usbmodemEPTXP*, the FX MIC as cu.usbmodemEPXYW*.
+    public static func serialDevicePath(among deviceNames: [String]) -> String? {
+        deviceNames
+            .filter { $0.hasPrefix("cu.usbmodemEP") }
+            .sorted()
+            .first
+            .map { "/dev/\($0)" }
+    }
+
+    /// True when this device needs no firmware flow: tingle flashed the
+    /// pinned version onto it, or it reports a version at least that new.
+    /// Without the second check, Flash EP on an FX MIC shipping 1.1.2 would
+    /// route through the ritual and DOWNGRADE it to the pinned 1.0.8.
+    public static func isFirmwareCurrent() -> Bool {
+        if Prefs.lastFlashedFirmware(serial: dockedSerial()) == version { return true }
+        guard let running = runningVersion() else { return false }
+        return isVersion(running, atLeast: version)
+    }
+
+    /// Firmware the docked device reports in its USB product name. Newer
+    /// firmware embeds it ("EP_2350 1_1_2"); older builds only said
+    /// "EP-2350", so nil means unknown, not old.
+    public static func runningVersion() -> String? {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault, IOServiceMatching("IOUSBHostDevice"), &iterator) == KERN_SUCCESS
+        else { return nil }
+        defer { IOObjectRelease(iterator) }
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
+            let vendor = IORegistryEntryCreateCFProperty(
+                service, "idVendor" as CFString, kCFAllocatorDefault, 0)?
+                .takeRetainedValue() as? Int
+            guard vendor == teenageEngineeringVendorID else { continue }
+            let name = IORegistryEntryCreateCFProperty(
+                service, "USB Product Name" as CFString, kCFAllocatorDefault, 0)?
+                .takeRetainedValue() as? String
+            if let name, let parsed = firmwareVersion(fromProductName: name) { return parsed }
+        }
+        return nil
+    }
+
+    static let teenageEngineeringVendorID = 0x2367
+
+    public static func firmwareVersion(fromProductName name: String) -> String? {
+        let tokens = name.split(separator: " ")
+        guard tokens.count >= 2, tokens[0].replacingOccurrences(of: "_", with: "-") == "EP-2350"
+        else { return nil }
+        let parts = tokens[1].split(whereSeparator: { $0 == "_" || $0 == "." })
+        guard parts.count == 3, parts.allSatisfy({ Int($0) != nil }) else { return nil }
+        return parts.joined(separator: ".")
+    }
+
+    public static func isVersion(_ a: String, atLeast b: String) -> Bool {
+        let lhs = a.split(separator: ".").map { Int($0) ?? 0 }
+        let rhs = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(lhs.count, rhs.count) {
+            let l = i < lhs.count ? lhs[i] : 0
+            let r = i < rhs.count ? rhs[i] : 0
+            if l != r { return l > r }
+        }
+        return true
     }
 
     // MARK: - Steps

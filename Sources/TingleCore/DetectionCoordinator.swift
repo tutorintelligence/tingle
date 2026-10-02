@@ -220,14 +220,9 @@ final class DetectionCoordinator {
         }
     }
 
-    /// The ting enumerates as /dev/cu.usbmodemEPTXP* (see DESIGN.md).
     static func findSerialDevicePath() -> String? {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? []
-        return names
-            .filter { $0.hasPrefix("cu.usbmodemEPTXP") }
-            .sorted()
-            .first
-            .map { "/dev/\($0)" }
+        FirmwareUpgrader.serialDevicePath(
+            among: (try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? [])
     }
 
     private func startSerial(path: String) {

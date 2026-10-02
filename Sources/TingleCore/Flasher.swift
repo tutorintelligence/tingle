@@ -11,7 +11,28 @@ import os
 /// AppleDouble junk, ejects. "Restore stock" deletes the overrides instead —
 /// without main.py and 1-4.wav the device is 100% stock.
 public enum Flasher {
-    static let volumeURL = URL(fileURLWithPath: "/Volumes/TINGDISK", isDirectory: true)
+    /// The same EP-2350 hardware mounts under a different name per product
+    /// variant: the ting as TINGDISK, the FX MIC as "FX MIC DISK".
+    public static let volumeNames = ["TINGDISK", "FX MIC DISK"]
+
+    /// The first mounted volume from `volumeNames`, falling back to the
+    /// ting's so error paths still name a concrete location.
+    static var volumeURL: URL {
+        mountedVolume(in: URL(fileURLWithPath: "/Volumes", isDirectory: true))
+            ?? URL(fileURLWithPath: "/Volumes/\(volumeNames[0])", isDirectory: true)
+    }
+
+    public static func mountedVolume(in volumesRoot: URL) -> URL? {
+        for name in volumeNames {
+            let url = volumesRoot.appendingPathComponent(name, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                return url
+            }
+        }
+        return nil
+    }
 
     private static let sampleFileNames = ["1.wav", "2.wav", "3.wav", "4.wav"]
     /// Everything FLASH EP can touch (and therefore backs up / restores).
@@ -124,9 +145,7 @@ public enum Flasher {
     }
 
     static var isTingleiskMounted: Bool {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: volumeURL.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
+        mountedVolume(in: URL(fileURLWithPath: "/Volumes", isDirectory: true)) != nil
     }
 
     /// Mounted AND actually accepting writes. The volume appears in

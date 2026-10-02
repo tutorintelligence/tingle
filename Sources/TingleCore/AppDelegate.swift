@@ -53,8 +53,24 @@ public enum TingleApp {
 }
 
 
-enum Log {
+public enum Log {
     static let subsystem = "com.tutorintelligence.tingle"
+
+    /// Wrap anything the user said before logging it. Dev builds keep the
+    /// words so rewrite bugs can be traced; release builds keep only the
+    /// length, because the unified log is readable by any admin process
+    /// and outlives the dictation.
+    static func transcript(_ text: String) -> String {
+        #if DEBUG
+        return text
+        #else
+        return redacted(text)
+        #endif
+    }
+
+    public static func redacted(_ text: String) -> String {
+        "<\(text.count) chars>"
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
