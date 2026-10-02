@@ -178,6 +178,7 @@ runBeaconScannerTests()
 runGuardrailTests()
 runRewriteTests()
 runFlasherTests()
+runDeviceDiscoveryTests()
 runAudioEngineOpsTests()
 runAudioHardwareTests()
 

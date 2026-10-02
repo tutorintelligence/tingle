@@ -77,6 +77,12 @@ func runRewriteTests() {
         output: "And then the model said, I cannot comply with your request, which is hilarious.") == nil,
         "rewrite: gate allows refusal phrases the speaker dictated")
 
+    // Release builds log rewrite stages through Log.redacted: a user's
+    // exact dictation showed up in `log show` (2026-10-01).
+    let spoken = "meet me at the usual place at nine"
+    expect(!Log.redacted(spoken).contains("usual"), "rewrite: redacted log drops the words")
+    expectEqual(Log.redacted(spoken), "<\(spoken.count) chars>", "rewrite: redacted log keeps the length")
+
     runRewriteEditTests()
 }
 

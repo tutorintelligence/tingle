@@ -232,17 +232,17 @@ public final class DictationController {
             defer { if modelWillRun { DispatchQueue.main.async { notifyRewriteActive?(false) } } }
             let started = Date()
             var candidate = rewriteConfig.removeFillers ? RewritePrompt.stripFillers(text) : text
-            // Stage-by-stage logging (local unified log only): this is the
-            // ground truth for separating model behavior from apply bugs.
-            log.info("rewrite in: \(text, privacy: .public)")
+            // Stage-by-stage logging: the ground truth for separating model
+            // behavior from apply bugs.
+            log.info("rewrite in: \(Log.transcript(text), privacy: .public)")
             if candidate != text {
-                log.info("rewrite filler-stripped: \(candidate, privacy: .public)")
+                log.info("rewrite filler-stripped: \(Log.transcript(candidate), privacy: .public)")
             }
             if model.isAvailable {
                 let instructions = RewritePrompt.instructions(config: rewriteConfig, vocabulary: vocabulary)
                 if let out = try? await model.rewrite(candidate, instructions: instructions) {
                     let processed = RewritePrompt.postProcess(out)
-                    log.info("rewrite model out: \(processed, privacy: .public)")
+                    log.info("rewrite model out: \(Log.transcript(processed), privacy: .public)")
                     if let reason = RewritePrompt.gate(input: candidate, output: processed) {
                         log.info("rewrite REJECTED by gate (\(reason, privacy: .public)); keeping filler-stripped text")
                     } else {
@@ -273,7 +273,7 @@ public final class DictationController {
                 DictationKeystrokes.post(edit)
                 self.takeStack[self.takeStack.count - 1].characterCount = finalText.count
                 self.takeStack[self.takeStack.count - 1].lastCharacter = finalText.last
-                log.info("rewrite applied in \(String(format: "%.2f", elapsed), privacy: .public)s: -\(edit.backspaces) backspaces, retyped: \(edit.append, privacy: .public)")
+                log.info("rewrite applied in \(String(format: "%.2f", elapsed), privacy: .public)s: -\(edit.backspaces) backspaces, retyped: \(Log.transcript(edit.append), privacy: .public)")
             }
         }
     }
